@@ -90,6 +90,16 @@ class AgentRunner:
                 )
                 self.run_start_time = None
 
+    async def get_events(self, timeout: float = 0.5):
+        events = []
+        while True:
+            try:
+                event = await asyncio.wait_for(self.queue.get(), timeout=timeout)
+                events.append(event)
+            except asyncio.TimeoutError:
+                break
+        return events
+
     async def run(self):
         while True:
             if self.status == "sleep":
@@ -97,42 +107,45 @@ class AgentRunner:
             elif self.status == "stop":
                 break
 
-            try:
-                event = await asyncio.wait_for(self.queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            events = await self.get_events()
+            if len(events) == 0:
                 continue
-            if isinstance(event, Record):
-                prompt = self.meeting.record_to_prompt(event, self.agent)
-                self.run_start_time = time.time()
-                if self.agent.message_to is None:
-                    resp = await self.agent.run(
-                        prompt,
-                        response_format=Message,
-                        process_step_message=self.process_step_message,
-                        process_chunk=self.process_chunk,
-                    )
-                    record = message_to_record(resp.content, self.agent.name)
-                else:
-                    resp = await self.agent.run(
-                        prompt,
-                        process_step_message=self.process_step_message,
-                        process_chunk=self.process_chunk,
-                    )
-                    record = message_to_record(
-                        Message(content=resp.content, targets=self.agent.message_to),
-                        self.agent.name,
-                    )
-                if record.content:
-                    self.meeting.public_queue.put_nowait(record)
-                self.run_start_time = None
+
+            prompt = self.meeting.records_to_prompt(events, self.agent)
+            self.run_start_time = time.time()
+            if self.agent.message_to is None:
+                resp = await self.agent.run(
+                    prompt,
+                    response_format=Message,
+                    process_step_message=self.process_step_message,
+                    process_chunk=self.process_chunk,
+                )
+                record = message_to_record(resp.content, self.agent.name)
+            else:
+                resp = await self.agent.run(
+                    prompt,
+                    process_step_message=self.process_step_message,
+                    process_chunk=self.process_chunk,
+                )
+                record = message_to_record(
+                    Message(content=resp.content, targets=self.agent.message_to),
+                    self.agent.name,
+                )
+            if record.content:
+                self.meeting.public_queue.put_nowait(record)
+            self.run_start_time = None
 
 
 class Meeting():
     def __init__(
             self,
             agents: List[Agent],
+            shared_memory: bool = False,
+            copy_agents: bool = False,
             ):
-        self.agents = {agent.name: copy.deepcopy(agent) for agent in agents}
+        self.shared_memory = shared_memory
+        self.copy_agents = copy_agents
+        self.setup_agents(agents)
         self.public_queue = asyncio.Queue()
         self._stream = asyncio.Queue()
         self.stream_queue = asyncio.Queue()
@@ -145,13 +158,24 @@ class Meeting():
         self.round = 0
         self.print_stream = False
 
+    def setup_agents(
+            self,
+            agents: List[Agent],
+            ):
+        self.agents = {}
+        if self.copy_agents:
+            self.agents = {agent.name: copy.deepcopy(agent) for agent in agents}
+        else:
+            self.agents = {agent.name: agent for agent in agents}
+        if self.shared_memory:
+            for agent in self.agents.values():
+                agent.use_shared_memory = False
+
     async def process_public_queue(self):
         while True:
             if (self.max_rounds is not None) and (self.round >= self.max_rounds):
                 # Stop all agents and break the loops
-                for runner in self.agent_runners.values():
-                    runner.status = "stop"
-                self._stream.put_nowait(StopSignal())
+                await self.stop()
                 break
             record = await self.public_queue.get()
             self._stream.put_nowait(record)
@@ -164,6 +188,11 @@ class Meeting():
                     if target in self.agent_runners:
                         self.agent_runners[target].queue.put_nowait(record)
             self.round += 1
+
+    async def stop(self):
+        for runner in self.agent_runners.values():
+            runner.status = "stop"
+        self._stream.put_nowait(StopSignal())
 
     async def process_stream(self):
         while True:
@@ -193,7 +222,7 @@ class Meeting():
             f"Content:\n{record.content}\n"
         )
 
-    def record_to_prompt(self, record: Record, agent: Agent) -> str:
+    def records_to_prompt(self, records: list[Record], agent: Agent) -> str:
         if agent.message_to is None:
             participants_str = (
                 f"## Current participants\n" +
@@ -208,30 +237,46 @@ class Meeting():
         else:
             rounds_str = ""
 
+        messages_str = "\n".join(
+            self.format_record(record)
+            for record in records
+        )
+
+        if self.shared_memory and len(records) > 0:
+            history_str = f"## Meeting history\n" 
+            filtered_records = [
+                r for r in self._records
+                if not (r in records)
+            ]
+            history_str += self.format_meeting_records(filtered_records)
+        else:
+            history_str = ""
+
         return (
             f"# Meeting message\n"
             f"You are a meeting participant, your name is {agent.name}\n"
             f"Don't repeat the input message in your response.\n"
             f"Don't send message to 'all', when it's not necessary.\n"
-            f"Don't need too plain language, be creative and think deeply.\n"
+            f"Don't be too modest and polite, be creative and think deeply.\n"
             f"You can ask questions to other participants.\n"
             f"You can use your tools to get more information.\n"
             f"{rounds_str}"
             f"{participants_str}\n"
-            f"## Message\n"
-            f"{self.format_record(record)}"
+            f"{history_str}\n"
+            f"## Messages\n"
+            f"{messages_str}"
         )
 
-    def format_meeting_records(self) -> str:
+    def format_meeting_records(self, records: list[Record]) -> str:
         return "\n---\n".join(
             self.format_record(record)
-            for record in self._records
+            for record in records
         )
 
     async def run(
             self,
             initial_message: Record | str | None = None,
-            rounds: int | None = 20,
+            rounds: int | None = None,
             print_stream: bool = False,
             ) -> str:
         """Run the meeting and return the meeting record.
@@ -256,7 +301,7 @@ class Meeting():
             self.process_stream(),
             *[runner.run() for runner in self.agent_runners.values()],
         )
-        return self.format_meeting_records()
+        return self.format_meeting_records(self._records)
 
 
 class BrainStorm(Meeting):
@@ -264,3 +309,10 @@ class BrainStorm(Meeting):
         super().__init__(agents)
         for agent in self.agents.values():
             agent.message_to = "all"
+
+
+class UserCentricMeeting(Meeting):
+    def __init__(self, agents: List[Agent], shared_memory: bool = True):
+        super().__init__(agents, shared_memory=shared_memory)
+        for agent in self.agents.values():
+            agent.message_to = "user"

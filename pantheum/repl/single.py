@@ -23,9 +23,9 @@ class Repl:
         # print current agent
         self.console.print("[bold]Current agent:[/bold]")
         self.console.print(f"  - [blue]{self.agent.name}[/blue]")
-        # print their instructions
+        # print agent instructions
         self.console.print(f"    - [green]Instructions:[/green] {self.agent.instructions}")
-        # print their tools
+        # print agent tools
         if self.agent.functions:
             self.console.print("    - [green]Tools:[/green]")
             for func in self.agent.functions.values():

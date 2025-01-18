@@ -1,11 +1,9 @@
 import asyncio
-import sys
 
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Static, Input, Button, Markdown
 from textual.containers import Vertical, Horizontal, VerticalScroll
 
-from ..agent import Agent
 from ..meeting import (
     Meeting, Message, message_to_record,
     ToolEvent, ToolResponseEvent, ThinkingEvent, Record
@@ -50,10 +48,9 @@ class Repl(App):
     }
     """
 
-    def __init__(self, agents: list[Agent]):
+    def __init__(self, meeting: Meeting):
         super().__init__()
-        self.agents = agents
-        self.meeting = Meeting(agents)
+        self.meeting = meeting
         self._meeting_task = None
         self._process_messages_task = None
         self._ui_task = None
@@ -78,15 +75,21 @@ class Repl(App):
         if self._ui_task:
             self._ui_task.cancel()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.msg_container = self.query_one("#messages", VerticalScroll)
         self.message_input = self.query_one("#message_input", Input)
+        await self.print_greeting()
 
     def send_message(self) -> None:
         """Handles sending messages."""
         message = self.message_input.value.strip()
         if message:
-            msg = Message(content=message, targets="all")
+            if message.startswith("@"):
+                target = message[1:].split()[0]
+                content = message[len(target)+1:].strip()
+                msg = Message(content=content, targets=[target])
+            else:
+                msg = Message(content=message, targets="all")
             self.meeting.public_queue.put_nowait(
                 message_to_record(msg, "user")
             )
@@ -99,6 +102,28 @@ class Repl(App):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "message_input":
             self.send_message()
+
+    async def print_greeting(self):
+        agents_str = ""
+        for agent in self.meeting.agents.values():
+            agents_str += f"  - [blue]{agent.name}[/blue]\n"
+            agents_str += f"    - [green]Instructions:[/green] {agent.instructions}\n"
+            if agent.functions:
+                agents_str += f"    - [green]Tools:[/green]\n"
+                for func in agent.functions.values():
+                    agents_str += f"      - {func.__name__}\n"
+            agents_str += "\n"
+
+        self.msg_container.mount(Static(
+            "[bold]Welcome to the Pantheum Meeting![/bold]\n" +
+            "You can start by typing a message or 'ctrl+q' to exit.\n\n" +
+            "[bold]Current agents:[/bold]\n" +
+            agents_str +
+            "You will send messages to all agents by default. " +
+            "If you want to send a message to a specific agent, " +
+            "you can @ the target agent's name at the beginning of your message.\n"
+        ))
+        self.msg_container.scroll_end()
 
     async def process_messages(self):
         while True:
@@ -150,12 +175,12 @@ class Repl(App):
     async def run(self):
         import logging
         logging.getLogger().setLevel(logging.WARNING)
+        self._ui_task = asyncio.create_task(self.run_async())
         self._meeting_task = asyncio.create_task(self.meeting.run())
         self._process_messages_task = asyncio.create_task(self.process_messages())
-        self._ui_task = asyncio.create_task(self.run_async())
 
         await asyncio.gather(
+            self._ui_task,
             self._meeting_task,
             self._process_messages_task,
-            self._ui_task,
         )
