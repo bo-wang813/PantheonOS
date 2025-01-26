@@ -41,6 +41,9 @@ class PythonInterpreterToolSet(ToolSet):
             code: The Python code to run.
             result_var_name: The name of the variable you want to get the result from.
                 If not needed, set to None. Default is None.
+
+        Returns:
+            A dictionary with the result, stdout, and stderr.
         """
         p_id = await self.new_interpreter()
         res = await self.run_code_in_interpreter(code, p_id, result_var_name)
@@ -112,6 +115,9 @@ class PythonInterpreterToolSet(ToolSet):
             interpreter_id: The id of the interpreter to run the code in.
             result_var_name: The name of the variable you want to get the result from.
                 If not needed, set to None. Default is None.
+
+        Returns:
+            A dictionary with the result, stdout, and stderr.
         """
         if interpreter_id not in self.interpreters:
             raise ValueError(f"Interpreter {interpreter_id} not found")
