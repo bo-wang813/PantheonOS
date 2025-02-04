@@ -1,6 +1,7 @@
 import copy
 import json
 import inspect
+import asyncio
 from typing import Callable, Any
 from uuid import uuid4
 
@@ -35,6 +36,7 @@ class Agent:
         response_format: Any | None = None,
         use_short_term_memory: bool = True,
         short_term_memory: list[dict] | None = None,
+        tool_timeout: int | None = 10 * 60,
     ):
         self.id = uuid4()
         self.name = name
@@ -49,6 +51,7 @@ class Agent:
         self.response_format = response_format
         self.use_short_term_memory = use_short_term_memory
         self.short_term_memory = short_term_memory or []
+        self.tool_timeout = tool_timeout
         # Restrict message targets in meeting
         self.message_to: None | list[str] = None
 
@@ -98,7 +101,11 @@ class Agent:
         return functions
 
     async def handle_tool_calls(
-            self, tool_calls: list, context_variables: dict):
+            self,
+            tool_calls: list,
+            context_variables: dict,
+            timeout: int,
+            ):
         messages = []
         for call in tool_calls:
             try:
@@ -109,15 +116,21 @@ class Agent:
                     func = self.functions[func_name]
                     if __CTX_VARS_NAME__ in func.__code__.co_varnames:
                         params[__CTX_VARS_NAME__] = context_variables
-                    result = await run_func(func, **params)
+                    result = await asyncio.wait_for(
+                        run_func(func, **params),
+                        timeout=timeout,
+                    )
                 else:
                     # remote toolset
                     assert func_name in self._func_to_proxy, \
                         f"Function `{func_name}` is not found in the toolset or local functions"
                     proxy = self.toolset_proxies[self._func_to_proxy[func_name]]
-                    result = await proxy.invoke(func_name, parameters=params)
+                    result = await asyncio.wait_for(
+                        proxy.invoke(func_name, parameters=params),
+                        timeout=timeout,
+                    )
             except Exception as e:
-                result = str(e)
+                result = repr(e)
 
             if isinstance(result, Agent):
                 return result
@@ -140,9 +153,12 @@ class Agent:
         context_variables: dict | None = None,
         response_format: Any | None = None,
         tool_use: bool = True,
+        tool_timeout: int | None = None,
     ):
         response_format = response_format or self.response_format
         history = copy.deepcopy(messages)
+        tool_timeout = tool_timeout or self.tool_timeout
+
         history.insert(0, {"role": "system", "content": self.instructions})
         init_len = len(history)
         if context_variables is None:
@@ -196,6 +212,7 @@ class Agent:
             tool_messages = await self.handle_tool_calls(
                 message["tool_calls"],
                 context_variables=context_variables,
+                timeout=tool_timeout,
             )
             history.extend(tool_messages)
             if process_step_message:
@@ -248,6 +265,7 @@ class Agent:
             process_chunk: Callable | None = None,
             process_step_message: Callable | None = None,
             use_short_term_memory: bool | None = None,
+            tool_timeout: int | None = None,
             ) -> AgentResponse:
         """Run the agent.
 
@@ -259,12 +277,14 @@ class Agent:
             process_chunk: The function to process the chunk.
             process_step_message: The function to process the step message.
             use_short_term_memory: Whether to use short term memory.
+            tool_timeout: The timeout for the tool.
         """
         _use_sm = self.use_short_term_memory
         if use_short_term_memory is not None:
             _use_sm = use_short_term_memory
         messages = self.input_to_openai_messages(msg, _use_sm)
         response_format = response_format or self.response_format
+
         details = await self.run_stream(
             messages=messages,
             response_format=response_format,
@@ -272,7 +292,9 @@ class Agent:
             context_variables=context_variables,
             process_chunk=process_chunk,
             process_step_message=process_step_message,
+            tool_timeout=tool_timeout,
         )
+
         final_msg = details.messages[-1]
         if response_format:
             content = final_msg.get("parsed")

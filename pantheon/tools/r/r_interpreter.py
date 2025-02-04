@@ -71,8 +71,8 @@ class RInterpreterToolSet(ToolSet):
             self,
             code: str,
             interpreter_id: str,
-            timeout: int = 20,
-            ) -> dict:
+            timeout: int = 10000,
+            ) -> str:
         """Run R code in an interpreter and return the output.
 
         Args:

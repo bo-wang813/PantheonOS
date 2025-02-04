@@ -1,9 +1,12 @@
+import time
+
+from pydantic import BaseModel
 from magique.client import MagiqueError
 from pantheon.remote import tool, ToolSet, connect_remote
 from pantheon.tools.web_browse import WebBrowseToolSet
 from pantheon.tools.python.python_interpreter import PythonInterpreterToolSet, PythonInterpreterError
-
 from executor.engine import Engine, LocalJob, ProcessJob
+
 import pytest
 
 
@@ -69,6 +72,44 @@ async def test_agent_call_toolset():
         resp = await agent.run("Call function `print_hello`")
         print(resp.content)
         assert a
+
+        await job.cancel()
+        await engine.wait_async()
+
+
+async def test_agent_call_toolset_with_timeout():
+    from pantheon.agent import Agent
+
+    class MyToolSet(ToolSet):
+        @tool
+        def print_hello(self):
+            """Print hello"""
+            time.sleep(10)
+            return "Hello, world!"
+
+    toolset = MyToolSet("my_toolset")
+
+    async def start_toolset():
+        await toolset.run()
+
+    with Engine() as engine:
+        job = LocalJob(start_toolset)
+        await engine.submit_async(job)
+        await job.wait_until_status("running")
+
+        agent = Agent(
+            "test",
+            "You are an asistant, help me test my code",
+            tool_timeout=1,
+        )
+        await agent.remote_toolset(toolset.service_id)
+
+
+        class RunResult(BaseModel):
+            success: bool
+
+        resp = await agent.run("Call function `print_hello`", response_format=RunResult)
+        assert resp.content.success is False
 
         await job.cancel()
         await engine.wait_async()

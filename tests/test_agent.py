@@ -1,3 +1,5 @@
+import asyncio
+
 from pantheon.agent import Agent
 from pydantic import BaseModel, Field
 from typing import List
@@ -162,3 +164,36 @@ async def test_agent_result_passing():
         answer_critic,
     )
     print(answer_summary.content)
+
+
+async def test_tool_timeout():
+    agent = Agent(
+        name="test",
+        instructions="",
+        model="gpt-4o-mini",
+        tool_timeout=1,
+        use_short_term_memory=False,
+    )
+
+    @agent.tool
+    def get_weather(city: str, unit: str = "celsius"):
+        """Get the weather of a city."""
+        return {"weather": "sunny", "temperature": 20}
+
+    resp = await agent.run("What is the weather in Palo Alto?")
+    print(resp.content)
+
+    agent.functions.clear()
+
+    flag = True
+
+    @agent.tool
+    async def get_weather(city: str, unit: str = "celsius"):
+        """Get the weather of a city."""
+        await asyncio.sleep(2)
+        nonlocal flag
+        flag = False
+
+    resp = await agent.run("What is the weather in Palo Alto?")
+    assert flag
+    print(resp)
