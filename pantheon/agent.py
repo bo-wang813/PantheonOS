@@ -155,7 +155,9 @@ class Agent:
         response_format: Any | None = None,
         tool_use: bool = True,
         tool_timeout: int | None = None,
+        model: str | None = None,
     ):
+        model = model or self.model
         response_format = response_format or self.response_format
         history = copy.deepcopy(messages)
         tool_timeout = tool_timeout or self.tool_timeout
@@ -270,6 +272,7 @@ class Agent:
             process_step_message: Callable | None = None,
             use_short_term_memory: bool | None = None,
             tool_timeout: int | None = None,
+            model: str | None = None,
             ) -> AgentResponse:
         """Run the agent.
 
@@ -282,6 +285,7 @@ class Agent:
             process_step_message: The function to process the step message.
             use_short_term_memory: Whether to use short term memory.
             tool_timeout: The timeout for the tool.
+            model: The model to use.
         """
         _use_sm = self.use_short_term_memory
         if use_short_term_memory is not None:
@@ -297,6 +301,7 @@ class Agent:
             process_chunk=process_chunk,
             process_step_message=process_step_message,
             tool_timeout=tool_timeout,
+            model=model,
         )
 
         final_msg = details.messages[-1]
@@ -317,3 +322,12 @@ class Agent:
         from .repl.single import Repl
         repl = Repl(self)
         await repl.run(message)
+
+    def save_memory(self, file_path: str):
+        with open(file_path, "w") as f:
+            processed_memory = process_messages(self.short_term_memory, self.model)
+            json.dump(processed_memory, f)
+
+    def load_memory(self, file_path: str):
+        with open(file_path, "r") as f:
+            self.short_term_memory = json.load(f)
