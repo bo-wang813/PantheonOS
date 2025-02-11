@@ -1,7 +1,7 @@
 import asyncio
 from abc import ABC
 
-from .agent import Agent, AgentTransfer, AgentInput
+from .agent import Agent, AgentTransfer, AgentInput, AgentResponse
 
 
 class Team(ABC):
@@ -30,6 +30,12 @@ class Team(ABC):
     async def run(self, msg: AgentInput, **kwargs):
         pass
 
+    async def chat(self, message: str | dict | None = None):
+        """Chat with the team with a REPL interface."""
+        from .repl.team import Repl
+        repl = Repl(self)
+        await repl.run(message)
+
 
 class SwarmTeam(Team):
     """Team that run agents in handoff & routines patterns like
@@ -47,3 +53,100 @@ class SwarmTeam(Team):
                 msg = resp
             else:
                 return resp
+
+
+class SequentialTeam(Team):
+    """Team that run agents in sequential order."""
+    def __init__(self, agents: list[Agent], connect_prompt: str = "Next:"):
+        super().__init__(agents)
+        self.order = list(self.agents.keys())
+        self.connect_prompt = connect_prompt
+
+    async def run(self, msg: AgentInput, **kwargs):
+        first = self.agents[self.order[0]]
+        history = first.input_to_openai_messages(msg, False)
+        for name in self.order:
+            resp = await self.agents[name].run(history, **kwargs)
+            history.extend(resp.details.messages)
+            history.append({"role": "user", "content": self.connect_prompt})
+        return resp
+
+
+class MoATeam(Team):
+    """Team that run agents in a MoA (Mixture-of-Agents) pattern.
+    
+    Reference:
+        - [MoA: Mixure-of-Agents](https://arxiv.org/abs/2406.04692)
+        - [Self-MoA](https://arxiv.org/abs/2502.00674)
+    """
+
+    AGGREGATION_TEMPLATE = """Below are responses from different AI models to the same query.  
+Please carefully analyze these responses and generate a final answer that is:  
+- Most accurate and comprehensive  
+- Best aligned with the user's instructions  
+- Free from errors or inconsistencies  
+
+### Query:  
+{user_query}  
+
+### Responses:  
+{responses}
+
+### Final Answer:"""
+
+    def __init__(
+            self,
+            proposers: list[Agent],
+            aggregator: Agent,
+            layers: int = 1,
+            parallel: bool = True,
+            ):
+        super().__init__(proposers + [aggregator])
+        self.proposers = proposers
+        self.aggregator = aggregator
+        self.layers = layers
+        self.parallel = parallel
+
+    def get_aggregate_prompt(
+            self,
+            user_query: list[dict],
+            responses: dict[str, AgentResponse],
+            ) -> str:
+        resps_str = ""
+        for i, resp in enumerate(responses.values()):
+            resps_str += f"{i+1}. {resp.agent_name}:\n{resp.content}\n\n"
+        user_query_str = user_query[-1]["content"]
+        return self.AGGREGATION_TEMPLATE.format(
+            user_query=user_query_str,
+            responses=resps_str,
+        )
+
+    async def run_proposers(self, input_, **proposer_kwargs) -> dict[str, AgentResponse]:
+        if self.parallel:
+            tasks = [proposer.run(input_, **proposer_kwargs) for proposer in self.proposers]
+            gathered = await asyncio.gather(*tasks)
+            return {proposer.name: resp for proposer, resp in zip(self.proposers, gathered)}
+        else:
+            responses = {}
+            for proposer in self.proposers:
+                resp = await proposer.run(input_, **proposer_kwargs)
+                responses[proposer.name] = resp
+            return responses
+
+    async def run(
+            self,
+            msg: AgentInput,
+            proposer_kwargs: dict = {},
+            **aggregator_kwargs,
+            ) -> AgentResponse:
+        history = self.aggregator.input_to_openai_messages(msg, False)
+        for i in range(self.layers):
+            if i == 0:
+                responses = await self.run_proposers(history, **proposer_kwargs)
+            else:
+                agg_prompt = self.get_aggregate_prompt(history, responses)
+                responses = await self.run_proposers(agg_prompt, **proposer_kwargs)
+
+        agg_prompt = self.get_aggregate_prompt(history, responses)
+        resp = await self.aggregator.run(agg_prompt, **aggregator_kwargs)
+        return resp
