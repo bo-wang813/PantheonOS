@@ -20,7 +20,7 @@ async def run_app(
     if agent_factory is None:
         agent_factory = lambda: Agent(
             "slack-assistant",
-            "You are a helpful assistant that can answer questions and help with tasks.",
+            "You are a helpful slack assistant. Keep your responses compatible with slack formatting.",
             model="gpt-4o-mini"
         )
 
@@ -46,11 +46,25 @@ async def run_app(
 
     def get_agent(body):
         user_id = body["event"]["user"]
-        agent = agents.get(user_id)
-        if agent is None:
-            agent = agent_factory()
-            agents[user_id] = agent
-        return agent
+        if is_direct_message(body):
+            agent = agents.get(user_id)
+            if agent is None:
+                agent = agent_factory()
+                agents[user_id] = agent
+            return agent
+        else:
+            channel_id = body["event"]["channel"]
+            if channel_id not in agents:
+                agents[channel_id] = agent_factory()
+            return agents[channel_id]
+    
+    def reset_agent(body):
+        user_id = body["event"]["user"]
+        if is_direct_message(body):
+            agents[user_id] = agent_factory()
+        else:
+            channel_id = body["event"]["channel"]
+            agents[channel_id] = agent_factory()
 
     async def get_reply(body):
         content = body["event"]["text"]
@@ -60,6 +74,32 @@ async def run_app(
         if content.startswith("!toolset"):
             await agent.remote_toolset(content.split(" ")[1])
             return "Toolset successfully loaded."
+        elif content.startswith("!reset"):
+            reset_agent(body)
+            return "Agent reset."
+        elif content.startswith("!clear"):
+            agent.memory.clear()
+            return "Agent memory cleared."
+        elif content.startswith("!help"):
+            from .. import __version__
+            return f"""You can talk with me in a direct message or in a channel. Run following commands in a message to control me:
+
+`!reset` - Reset me to default state, it will forget all memory and toolset.
+`!toolset <service_id/service_name>` - Load a toolset.
+`!clear` - Clear my memory.
+`!help` - Show this help.
+
+How to start a toolset in your local computer:
+
+1. Install `pantheon-agents[tool]` Python package: `pip install pantheon-agents[tool]`
+2. Start the toolset(for example, a python interpreter): `python -m pantheon.tools.python`
+3. Get the service id from the toolset's log.
+4. Paste the service id and the command to load the toolset to me. For example: `!toolset your_service_id`
+
+This project is still under development. If you have any feedback, you can raise an issue on the repo: https://github.com/aristoteleo/pantheon-agents
+
+Current version: {__version__}
+"""
 
         user_name = await get_user_name(user_id)
         if user_name:
@@ -69,6 +109,7 @@ async def run_app(
             return "You have reached the daily message limit."
 
         res = await agent.run(content)
+        logger.info(res.content)
         return res.content
 
     async def get_user_name(user):
@@ -113,18 +154,34 @@ async def run_app(
                 ts=resp["ts"],
             )
 
+    async def app_is_in_thread(app_id, channel_id, thread_id):
+        thread_messages = await app.client.conversations_replies(
+            channel=channel_id,
+            ts=thread_id,
+        )
+        for message in thread_messages["messages"]:
+            if message.get("app_id") == app_id:
+                return True
+        return False
+
     @app.event("message")
     async def handle_message(body, say, client, ack):
         logger.info(body)
         if is_direct_message(body):
             await response_user(body, client, ack, in_thread=False)
         else:
-            if body["event"].get("thread_ts"):
-                await response_user(body, client, ack, in_thread=True)
+            event = body["event"]
+            if thread_id := event.get("thread_ts"):
+                if await app_is_in_thread(body['api_app_id'], event["channel"], thread_id):
+                    await response_user(body, client, ack, in_thread=True)
 
     @app.event("app_mention")
     async def handle_app_mention(body, say, client, ack):
         logger.info(body)
+        event = body["event"]
+        if thread_id := event.get("thread_ts"):
+            if await app_is_in_thread(body['api_app_id'], event["channel"], thread_id):
+                return
         await response_user(body, client, ack, in_thread=True)
 
     async def reset_user_message_count():
