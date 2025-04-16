@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 import warnings
 from typing import Any, Callable
 
@@ -110,15 +111,35 @@ def convert_tool_message(messages: list[dict]) -> list[dict]:
     return new_messages
 
 
+def remove_raw_content(messages: list[dict]) -> list[dict]:
+    for msg in messages:
+        if "raw_content" in msg:
+            del msg["raw_content"]
+    return messages
+
+
+def remove_unjsonifiable_raw_content(messages: list[dict]) -> list[dict]:
+    for msg in messages:
+        if "raw_content" in msg:
+            try:
+                json.dumps(msg["raw_content"])
+            except:
+                del msg["raw_content"]
+    return messages
+
+
 def process_messages(messages: list[dict], model: str) -> list[dict]:
     messages = deepcopy(messages)
     messages = remove_parsed(messages)
+    messages = remove_raw_content(messages)
     return messages
 
 
 def process_messages_for_store(messages: list[dict]) -> list[dict]:
     messages = deepcopy(messages)
-    return remove_parsed(messages)
+    messages = remove_parsed(messages)
+    messages = remove_unjsonifiable_raw_content(messages)
+    return messages
 
 
 async def openai_embedding(texts: list[str], model: str = "text-embedding-3-large") -> list[list[float]]:
