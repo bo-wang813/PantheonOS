@@ -14,7 +14,7 @@ async def default_agent_factory() -> Agent | Team:
     agent = Agent(
         name="Pantheon",
         instructions="You are a helpful assistant that can answer questions and help with tasks.",
-        model="gpt-4o",
+        model="gpt-4.1",
     )
     return agent
 

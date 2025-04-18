@@ -61,3 +61,35 @@ See the [examples](examples) folder for more details.
   + [x] Slack
   + [ ] WeChat
 - [ ] Documentation
+
+## Start a chatroom and work with it
+
+### Start a chatroom backend server
+
+```bash
+git clone https://github.com/aristoteleo/pantheon-agents.git
+cd pantheon-agents
+
+pip install -e .
+export OPENAI_API_KEY=your_openai_api_key
+python -m pantheon.chatroom
+```
+
+Then you can see a service id of chatroom, you can copy it for next step.
+
+### Start chatroom web UI
+
+1. Install node: See https://nodejs.org/en/download
+
+2. Install pnpm: See https://pnpm.io/installation#using-npm
+
+3. Start the web UI:
+
+```bash
+git clone https://github.com/aristoteleo/pantheon-ui.git
+cd pantheon-ui
+pnpm install
+pnpm run dev
+```
+
+4. Open the web UI: http://localhost:5173 then paste the service id to the input box and click "Connect".
