@@ -81,7 +81,12 @@ class ChatRoom:
                 "name": agent.name,
                 "instructions": agent.instructions,
                 "tools": [t for t in agent.functions.keys()],
-                "toolsets": [s.service_info.service_id for s in agent.toolset_proxies.values()],
+                "toolsets": [
+                    {
+                        'id': s.service_info.service_id,
+                        'name': s.service_info.service_name,
+                    } for s in agent.toolset_proxies.values()
+                ],
                 "icon": agent.icon,
             }
         return {
