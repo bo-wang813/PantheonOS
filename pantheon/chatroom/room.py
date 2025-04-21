@@ -24,7 +24,7 @@ def default_triage_agent():
 class ChatRoom:
     def __init__(
         self,
-        agents: list[Agent | RemoteAgent],
+        agents: list[Agent | RemoteAgent] | Agent | RemoteAgent,
         endpoint_service_id: str,
         triage_agent: Agent | None = None,
         memory_manager: MemoryManager | RemoteMemoryManager | None = None,
@@ -32,6 +32,8 @@ class ChatRoom:
         description: str = "Chatroom for Pantheon agents",
         worker_params: dict | None = None,
     ):
+        if isinstance(agents, Agent | RemoteAgent):
+            agents = [agents]
         self.triage_agent = triage_agent or default_triage_agent()
         self.team = SwarmCenterTeam(
             triage=self.triage_agent,
@@ -80,6 +82,7 @@ class ChatRoom:
                 "instructions": agent.instructions,
                 "tools": [t for t in agent.functions.keys()],
                 "toolsets": [s.service_info.service_id for s in agent.toolset_proxies.values()],
+                "icon": agent.icon,
             }
         return {
             "success": True,

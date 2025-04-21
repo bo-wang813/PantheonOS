@@ -10,46 +10,62 @@ from .endpoint import Endpoint
 from ..memory import MemoryManager
 
 
-async def default_agent_factory() -> Agent | Team:
-    agent = Agent(
+async def default_agents_factory(endpoint) -> dict:
+    assistant_agent = Agent(
         name="Pantheon",
         instructions="You are a helpful assistant that can answer questions and help with tasks.",
         model="gpt-4.1",
+        icon="🤖",
     )
-    return agent
+    s = await endpoint.get_service("python_interpreter")
+    if s is None:
+        raise ValueError("Python interpreter service not found")
+    await assistant_agent.remote_toolset(s["id"])
+
+    s = await endpoint.get_service("file_manager")
+    if s is None:
+        raise ValueError("File manager service not found")
+    await assistant_agent.remote_toolset(s["id"])
+
+    web_search_agent = Agent(
+        name="Web search",
+        instructions="You are a web search agent that can search the web for information.",
+        model="gpt-4.1",
+        icon="🔍",
+    )
+
+    s = await endpoint.get_service("web_browse")
+    if s is None:
+        raise ValueError("Web browser service not found")
+    await web_search_agent.remote_toolset(s["id"])
+
+    return {
+        "triage": assistant_agent,
+        "other": [web_search_agent],
+    }
 
 
 async def start_services(
     service_name: str = "pantheon-chatroom",
     memory_path: str = "./.pantheon-chatroom",
     workspace_path: str = "./.pantheon-chatroom-workspace",
-    agent_factory: Callable[[], Awaitable[Agent | Team]] = default_agent_factory,
+    agents_factory: Callable[[], Awaitable[list[Agent | Team]]] = default_agents_factory,
     log_level: str = "INFO",
 ):
     memory_manager = MemoryManager(memory_path)
-    agent = await agent_factory()
     w_path = Path(workspace_path)
     w_path.mkdir(parents=True, exist_ok=True)
     endpoint = Endpoint(workspace_path=workspace_path)
     asyncio.create_task(endpoint.run(log_level=log_level))
     await asyncio.sleep(0.5)
 
-    s = await endpoint.get_service("python_interpreter")
-    if s is None:
-        raise ValueError("Python interpreter service not found")
-    if isinstance(agent, Agent):
-        await agent.remote_toolset(s["id"])
-
-    s = await endpoint.get_service("file_manager")
-    if s is None:
-        raise ValueError("File manager service not found")
-    if isinstance(agent, Agent):
-        await agent.remote_toolset(s["id"])
+    agents = await agents_factory(endpoint)
 
     chat_room = ChatRoom(
-        agent,
-        endpoint.worker.service_id,
-        memory_manager,
+        triage_agent=agents["triage"],
+        agents=agents["other"],
+        endpoint_service_id=endpoint.worker.service_id,
+        memory_manager=memory_manager,
         name=service_name,
     )
     await chat_room.run(log_level=log_level)
