@@ -4,6 +4,7 @@ from pathlib import Path
 import base64
 import shutil
 import uuid
+from datetime import datetime
 
 from magique.worker import MagiqueWorker
 from magique.ai.toolset import run_toolsets, ToolSet
@@ -45,6 +46,7 @@ class Endpoint:
         # File management
         self.worker.register(self.fetch_image_base64)
         self.worker.register(self.list_files)
+        self.worker.register(self.move_file)
         self.worker.register(self.create_directory)
         self.worker.register(self.delete_directory)
         self.worker.register(self.delete_file)
@@ -103,10 +105,24 @@ class Endpoint:
                     "name": file.name,
                     "size": file.stat().st_size if file.is_file() else 0,
                     "type": "file" if file.is_file() else "directory",
+                    "last_modified": datetime.fromtimestamp(file.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 for file in files
             ],
         }
+
+    async def move_file(self, old_path: str, new_path: str):
+        """Move a file."""
+        if '..' in old_path:
+            return {"success": False, "error": "Old path cannot contain '..'"}
+        if '..' in new_path:
+            return {"success": False, "error": "New path cannot contain '..'"}
+        old_path = self.path / old_path
+        if not old_path.exists():
+            return {"success": False, "error": "Old path does not exist"}
+        new_path = self.path / new_path
+        shutil.move(old_path, new_path)
+        return {"success": True}
 
     async def create_directory(self, sub_dir: str):
         """Create a new directory."""
@@ -152,12 +168,12 @@ class Endpoint:
             self._handles[handle_id] = handle
             return {"success": True, "handle_id": handle_id}
         except Exception as e:
-            return {"error": str(e)}
+            return {"success": False, "error": str(e)}
 
     async def write_chunk(self, handle_id: str, data: bytes):
         """Write a chunk to a file."""
         if handle_id not in self._handles:
-            return {"error": "Handle not found"}
+            return {"success": False, "error": "Handle not found"}
         handle = self._handles[handle_id]
         handle.write(data)
         return {"success": True}
@@ -165,7 +181,7 @@ class Endpoint:
     async def close_file(self, handle_id: str):
         """Close a file."""
         if handle_id not in self._handles:
-            return {"error": "Handle not found"}
+            return {"success": False, "error": "Handle not found"}
         handle = self._handles[handle_id]
         handle.close()
         del self._handles[handle_id]
@@ -177,7 +193,7 @@ class Endpoint:
             return {"error": "File path cannot contain '..'"}
         path = self.path / file_path
         if not path.exists():
-            return {"error": "File does not exist"}
+            return {"success": False, "error": "File does not exist"}
         with open(path, "rb") as f:
             while True:
                 data = f.read(chunk_size)
