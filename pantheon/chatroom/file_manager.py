@@ -2,6 +2,7 @@ import io
 import base64
 
 from PIL import Image
+import pymupdf
 from magique.ai.tools.file_manager import FileManagerToolSet as _FileManagerToolSet
 from magique.ai.toolset import tool
 
@@ -40,3 +41,13 @@ class FileManagerToolSet(_FileManagerToolSet):
             })
         resp = await run([query_msg])
         return resp.content
+
+    @tool
+    async def read_pdf(self, pdf_path: str) -> str:
+        """Read a PDF file and return the text inside it."""
+        ipath = self.path / pdf_path
+        texts = []
+        doc = pymupdf.open(str(ipath))
+        for page in doc:
+            texts.append(page.get_text())
+        return "\n".join(texts)
