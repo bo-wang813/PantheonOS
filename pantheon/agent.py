@@ -162,6 +162,7 @@ class Agent:
             tool_calls: list,
             context_variables: dict,
             timeout: int,
+            client_id: str | None = None,
             ) -> list[dict]:
         from .remote.agent import RemoteAgent
         messages = []
@@ -189,12 +190,15 @@ class Agent:
                     proxy = self.toolset_proxies[self._func_to_proxy[func_name]]
                     service_info = await proxy.fetch_service_info()
                     func_desc = service_info.functions_description[func_name]
-                    if "__agent_run__" in [v.name for v in func_desc.inputs]:
+                    function_args = [v.name for v in func_desc.inputs]
+                    if "__agent_run__" in function_args:
                         async def agent_run(msg: AgentInput):
                             resp = await self.run(msg, allow_transfer=False)
                             return resp.content
 
                         params["__agent_run__"] = agent_run
+                    if ("__client_id__" in function_args) and (client_id is not None):
+                        params["__client_id__"] = client_id
                     result = await asyncio.wait_for(
                         proxy.invoke(func_name, parameters=params),
                         timeout=timeout,
@@ -286,6 +290,7 @@ class Agent:
         tool_timeout: int | None = None,
         model: str | None = None,
         allow_transfer: bool = True,
+        client_id: str | None = None,
     ) -> ResponseDetails | AgentTransfer:
         response_format = response_format or self.response_format
         history = copy.deepcopy(messages)
@@ -344,6 +349,7 @@ class Agent:
                 message["tool_calls"],
                 context_variables=context_variables,
                 timeout=tool_timeout,
+                client_id=client_id,
             )
             history.extend(tool_messages)
             for msg in tool_messages:
@@ -471,6 +477,7 @@ class Agent:
             tool_timeout=tool_timeout,
             model=model,
             allow_transfer=allow_transfer,
+            client_id=memory.id,
         )
 
         if isinstance(details, AgentTransfer):
