@@ -99,6 +99,7 @@ class ChatRoom:
         self.worker.register(self.create_chat)
         self.worker.register(self.delete_chat)
         self.worker.register(self.chat)
+        self.worker.register(self.stop_chat)
         self.worker.register(self.list_chats)
         self.worker.register(self.get_chat_messages)
         self.worker.register(self.update_chat_name)
@@ -305,6 +306,13 @@ class ChatRoom:
         await run_func(self.memory_manager.save)
         del self.threads[chat_id]
         return thread.response
+
+    async def stop_chat(self, chat_id: str):
+        thread = self.threads.get(chat_id, None)
+        if thread is None:
+            return {"success": False, "message": "Chat doesn't have a thread"}
+        await thread.stop()
+        return {"success": True, "message": "Chat stopped successfully"}
 
     async def speech_to_text(self, bytes_data: bytes):
         try:

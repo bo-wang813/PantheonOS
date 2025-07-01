@@ -38,6 +38,7 @@ class AgentResponse(BaseModel):
     agent_name: str
     content: Any
     details: Any
+    interrupt: bool = False
 
 
 class AgentTransfer(BaseModel):
@@ -49,6 +50,10 @@ class AgentTransfer(BaseModel):
 
 
 AgentInput = str | BaseModel | AgentResponse | list[str | BaseModel | dict] | AgentTransfer | VisionInput
+
+
+class StopRunning(Exception):
+    pass
 
 
 class Agent:
@@ -449,7 +454,7 @@ class Agent:
         new_input_messages = self.input_to_openai_messages(msg)
         memory = memory or self.memory
         if _use_m:
-            old_messages = await run_func(memory.get_messages)
+            old_messages = memory.get_messages()
             messages = old_messages + new_input_messages
         else:
             messages = new_input_messages
@@ -460,29 +465,39 @@ class Agent:
             context_variables = msg.context_variables
 
         if update_memory:
-            await run_func(memory.add_messages, new_input_messages)
+            memory.add_messages(new_input_messages)
             if process_step_message is not None:
                 async def _process_step_message(step_message: dict):
-                    await run_func(memory.add_messages, [step_message])
+                    memory.add_messages([step_message])
                     await run_func(process_step_message, step_message)
             else:
                 async def _process_step_message(step_message: dict):
-                    await run_func(memory.add_messages, [step_message])
+                    memory.add_messages([step_message])
         else:
             _process_step_message = process_step_message
 
-        details = await self.run_stream(
-            messages=messages,
-            response_format=response_format,
-            tool_use=tool_use,
-            context_variables=context_variables,
-            process_chunk=process_chunk,
-            process_step_message=_process_step_message,
-            tool_timeout=tool_timeout,
-            model=model,
-            allow_transfer=allow_transfer,
-            client_id=memory.id,
-        )
+        try:
+            details = await self.run_stream(
+                messages=messages,
+                response_format=response_format,
+                tool_use=tool_use,
+                context_variables=context_variables,
+                process_chunk=process_chunk,
+                process_step_message=_process_step_message,
+                tool_timeout=tool_timeout,
+                model=model,
+                allow_transfer=allow_transfer,
+                client_id=memory.id,
+            )
+        except StopRunning:
+            if update_memory:
+                memory.cleanup_after_interrupt()
+            return AgentResponse(
+                agent_name=self.name,
+                content="",
+                details=None,
+                interrupt=True,
+            )
 
         if isinstance(details, AgentTransfer):
             return details

@@ -39,6 +39,15 @@ class Memory:
     def get_messages(self):
         return self._messages
 
+    def cleanup_after_interrupt(self):
+        """Cleanup the memory after the agent is interrupted."""
+        while True:
+            last_message = self._messages[-1]
+            if last_message["role"] == "tool":
+                self._messages.pop()
+            else:
+                break
+
 
 DEFAULT_CHAT_NAME = "New Chat"
 

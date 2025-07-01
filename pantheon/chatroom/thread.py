@@ -6,6 +6,7 @@ from ..team import SwarmCenterTeam
 from ..memory import Memory
 from ..utils.misc import run_func
 from ..utils.log import logger
+from ..agent import StopRunning
 
 
 class Thread:
@@ -24,6 +25,7 @@ class Thread:
         self._process_step_message_hooks: list[Callable] = []
         self.response = None
         self.run_hook_timeout = run_hook_timeout
+        self._stop_flag = False
 
     def add_chunk_hook(self, hook: Callable):
         self._process_chunk_hooks.append(hook)
@@ -32,6 +34,8 @@ class Thread:
         self._process_step_message_hooks.append(hook)
 
     async def process_chunk(self, chunk: dict):
+        if self._stop_flag:
+            raise StopRunning()
         chunk["chat_id"] = self.memory.id
         _coros = []
         for hook in self._process_chunk_hooks:
@@ -89,3 +93,7 @@ class Thread:
             import traceback
             traceback.print_exc()
             self.response = {"success": False, "message": str(e), "chat_id": self.memory.id}
+
+    async def stop(self):
+        self._stop_flag = True
+        
