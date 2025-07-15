@@ -57,7 +57,7 @@ See the [examples](examples) folder for more details.
 - [ ] Report generation
 - [x] Vision ability
 - [ ] GUI
-  + [ ] Web UI
+  + [x] Web UI
   + [x] Slack
   + [ ] WeChat
 - [ ] Documentation

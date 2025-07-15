@@ -9,7 +9,6 @@ triage:
   toolsets:
     - python_interpreter
     - file_manager
-    - web_browse
 
 single_cell_expert:
   name: Single cell expert
@@ -55,10 +54,10 @@ single_cell_expert:
     - sc_analysis_python
     - file_manager
     - single-cell-python-packages-rag
-    - web_browse
 
 web_research_agent:
   name: Web Research Agent
+  toolful: true
   instructions: |
     You are a web search agent,
     you can search the web to find the information you need to answer the question.

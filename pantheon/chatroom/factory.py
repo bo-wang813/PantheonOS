@@ -14,6 +14,7 @@ async def create_agent(
         model: str,
         icon: str,
         toolsets: list[str] | None = None,
+        toolful: bool = False,
 ) -> Agent:
     agent = Agent(
         name=name,
@@ -21,6 +22,7 @@ async def create_agent(
         model=model,
         icon=icon,
     )
+    agent.toolful = toolful
     agent.not_loaded_toolsets = []
     if toolsets is None:
         return agent

@@ -97,9 +97,12 @@ class MemoryManager:
         if not self.path.exists():
             self.path.mkdir(parents=True)
         for file in self.path.glob("*.json"):
-            memory = Memory.load(str(file))
-            logger.info(f"Loaded memory: {memory.name} from {file}")
-            self.memory_store[memory.id] = memory
+            try:
+                memory = Memory.load(str(file))
+                logger.info(f"Loaded memory: {memory.name} from {file}")
+                self.memory_store[memory.id] = memory
+            except Exception as e:
+                logger.error(f"Failed to load memory from {file}: {e}")
 
     def update_memory_name(self, memory_id: str, name: str):
         memory = self.get_memory(memory_id)

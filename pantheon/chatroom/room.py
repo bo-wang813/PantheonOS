@@ -12,7 +12,7 @@ from magique.ai.constant import SERVER_URLS
 import openai
 
 from ..agent import Agent
-from ..team import SwarmCenterTeam
+from ..team import PantheonTeam
 from ..memory import MemoryManager
 from ..remote.agent import RemoteAgent
 from ..utils.misc import run_func
@@ -89,7 +89,7 @@ class ChatRoom:
         agents = await create_agents_from_template(endpoint, self.agents_template)
         triage_agent = agents["triage"]
         agents = agents["other"]
-        self.team = SwarmCenterTeam(
+        self.team = PantheonTeam(
             triage=triage_agent,
             agents=agents,
         )

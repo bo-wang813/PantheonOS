@@ -2,7 +2,7 @@ from typing import Callable
 import uuid
 import asyncio
 
-from ..team import SwarmCenterTeam
+from ..team import PantheonTeam
 from ..memory import Memory
 from ..utils.misc import run_func
 from ..utils.log import logger
@@ -11,7 +11,7 @@ from ..utils.log import logger
 class Thread:
     def __init__(
             self,
-            team: SwarmCenterTeam,
+            team: PantheonTeam,
             memory: Memory,
             message: list[dict],
             run_hook_timeout: int = 5,

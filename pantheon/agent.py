@@ -140,8 +140,9 @@ class Agent:
                 )
             else:
                 desc = parse_func(func)
+            assert isinstance(desc.name, str), "Function name must be a string"
             if not allow_transfer:
-                if desc.name.startswith("transfer_to_"):
+                if desc.name.startswith("transfer_to_") or desc.name.startswith("call_agent_"):
                     # NOTE: transfer function should start with `transfer_to_`
                     continue
             func_dict = desc_to_openai_dict(
@@ -208,7 +209,7 @@ class Agent:
                 start_time = time.time()
                 task = asyncio.create_task(run_func(_func, **params))
                 while True:
-                    if task.done():
+                    if task.done() or (task.cancelled()):
                         result = task.result()
                         break
                     else:

@@ -1,5 +1,6 @@
 import asyncio
 from abc import ABC
+import uuid
 
 from .agent import Agent, AgentTransfer, AgentInput, AgentResponse
 from .remote.agent import RemoteAgent
@@ -86,6 +87,7 @@ class SwarmCenterTeam(SwarmTeam):
     async def add_agent(self, agent: Agent | RemoteAgent):
         if isinstance(agent, RemoteAgent):
             await agent.fetch_info()
+        assert isinstance(agent.name, str), "Agent name must be a string"
         agent_func_name = agent.name.replace(" ", "_").lower()
         func_name = f"transfer_to_{agent_func_name}"
         exec(f"def {func_name}(): return self.agents['{agent.name}']", locals())
@@ -99,6 +101,7 @@ class SwarmCenterTeam(SwarmTeam):
         self.agents[agent.name] = agent
 
     async def remove_agent(self, agent: Agent | RemoteAgent):
+        assert isinstance(agent.name, str), "Agent name must be a string"
         del self.agents[agent.name]
         self.triage.functions.pop(f"transfer_to_{agent.name.replace(' ', '_').lower()}")
 
@@ -110,6 +113,128 @@ class SwarmCenterTeam(SwarmTeam):
     async def run(self, msg: AgentInput, **kwargs):
         await self.async_setup()
         return await super().run(msg, **kwargs)
+
+
+class PantheonTeam(Team):
+    """Pantheon team structure. """
+
+    def __init__(self, triage: Agent, agents: list[Agent | RemoteAgent]):
+        super().__init__([triage])
+        self.triage = triage
+        self._agents_to_add = agents
+        self._toolful_agents: set[str] = set()
+        self._call_stack: list[str] = []
+
+    def get_active_agent(self, memory: Memory) -> Agent | RemoteAgent:
+        active_agent_name = memory.extra_data.get("active_agent")
+        if (active_agent_name is None) or (active_agent_name not in self.agents):
+            active_agent_name = list(self.agents.keys())[0]
+            logger.warning(f"Active agent not found in memory, setting to {active_agent_name}")
+            memory.extra_data["active_agent"] = active_agent_name
+        active_agent = self.agents[active_agent_name]
+        return active_agent
+
+    def set_active_agent(self, memory: Memory, agent_name: str):
+        memory.extra_data["active_agent"] = agent_name
+
+    async def add_agent(self, agent: Agent | RemoteAgent, toolful: bool = False):
+        if isinstance(agent, RemoteAgent):
+            await agent.fetch_info()
+        assert isinstance(agent.name, str), "Agent name must be a string"
+        if toolful:
+            self._toolful_agents.add(agent.name)
+        agent_func_name = agent.name.replace(" ", "_").lower()
+        func_name = f"transfer_to_{agent_func_name}"
+        exec(f"def {func_name}(): return self.agents['{agent.name}']", locals())
+        transfer_func = eval(func_name)
+        await run_func(self.triage.tool, transfer_func)
+
+        def transfer_back_to_triage():
+            return self.triage
+
+        await run_func(agent.tool, transfer_back_to_triage)
+        self.agents[agent.name] = agent
+        await self.update_toolful_funcs()
+
+    async def add_toolful_call_func(self, agent: Agent | RemoteAgent, toolful_agent_name: str):
+        assert isinstance(agent.name, str), "Agent name must be a string"
+        agent_name = agent.name
+        def _call_toolful_agent(instruction: str):
+            self._call_stack.append(agent_name)  # push caller's name
+            return self.agents[toolful_agent_name]
+        _call_toolful_agent.__name__ = f"call_agent_{toolful_agent_name.replace(' ', '_')}"
+        _call_toolful_agent.__doc__ = f"Call {toolful_agent_name} agent to handle the instruction."
+        await run_func(agent.tool, _call_toolful_agent)
+
+    async def update_toolful_funcs(self):
+        for agent in self.agents.values():
+            is_toolful = agent.name in self._toolful_agents
+            if is_toolful:
+                continue
+            for func_name in agent.functions.keys():
+                if func_name.startswith("call_agent_"):
+                    del agent.functions[func_name]
+            for toolful_agent_name in self._toolful_agents:
+                await self.add_toolful_call_func(agent, toolful_agent_name)
+
+    async def remove_agent(self, agent: Agent | RemoteAgent):
+        assert isinstance(agent.name, str), "Agent name must be a string"
+        del self.agents[agent.name]
+        self.triage.functions.pop(f"transfer_to_{agent.name.replace(' ', '_').lower()}")
+
+        if agent.name in self._toolful_agents:
+            self._toolful_agents.remove(agent.name)
+        await self.update_toolful_funcs()
+
+    async def async_setup(self):
+        while self._agents_to_add:
+            agent = self._agents_to_add.pop(0)
+            if getattr(agent, "toolful", False):
+                await self.add_agent(agent, toolful=True)
+            else:
+                await self.add_agent(agent, toolful=False)
+
+    async def run(self, msg: AgentInput, memory: Memory | None = None, **kwargs):
+        await self.async_setup()
+        if memory is None:
+            memory = Memory(name="pantheon-team")
+        while True:
+            active_agent = self.get_active_agent(memory)
+            resp = await active_agent.run(msg, memory=memory, **kwargs)
+            if isinstance(resp, AgentTransfer):
+                self.set_active_agent(memory, resp.to_agent)
+                msg = resp
+            else:
+                if self._call_stack:
+                    process_step_message = kwargs.get("process_step_message", None)
+                    caller_name = self._call_stack.pop()
+                    call_id = "call_" + str(uuid.uuid4())[:20]
+                    transfer_message = {
+                        "role": "assistant",
+                        "content": f"Transfer back to {caller_name}.",
+                        "tool_calls": [{
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": f"transfer_to_{caller_name.replace(' ', '_')}",
+                                "arguments": "{}",
+                            },
+                        }],
+                        "agent_name": self.get_active_agent(memory).name,
+                    }
+                    tool_message = {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "tool_name": "transfer_to_" + caller_name.replace(' ', '_'),
+                        "content": caller_name,
+                    }
+                    self.set_active_agent(memory, caller_name)
+                    if process_step_message is not None:
+                        await process_step_message(transfer_message)
+                        await process_step_message(tool_message)
+                    memory.add_messages([transfer_message, tool_message])
+                else:
+                    return resp
 
 
 class SequentialTeam(Team):
