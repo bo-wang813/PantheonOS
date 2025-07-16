@@ -149,10 +149,6 @@ class PantheonTeam(Team):
         transfer_func = eval(func_name)
         await run_func(self.triage.tool, transfer_func)
 
-        def transfer_back_to_triage():
-            return self.triage
-
-        await run_func(agent.tool, transfer_back_to_triage)
         self.agents[agent.name] = agent
         await self.update_toolful_funcs()
 
@@ -170,6 +166,8 @@ class PantheonTeam(Team):
         for agent in self.agents.values():
             is_toolful = agent.name in self._toolful_agents
             if is_toolful:
+                continue
+            if agent is self.triage:
                 continue
             for func_name in agent.functions.keys():
                 if func_name.startswith("call_agent_"):

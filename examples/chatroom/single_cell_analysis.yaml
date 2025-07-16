@@ -45,9 +45,6 @@ single_cell_expert:
 
     NOTE: Don't need to confirm with user at most time, just do the task.
   model:
-    - anthropic/claude-sonnet-4-20250514
-    - anthropic/claude-3-7-sonnet-20250219
-    - anthropic/claude-3-5-sonnet-20240620
     - openai/gpt-4.1
   icon: 🧬
   toolsets:
@@ -79,7 +76,6 @@ web_research_agent:
     NOTE: Don't need to confirm with user at most time, just do the task.
     And you should use the markdown format to output the research result.
   model:
-    - anthropic/claude-sonnet-4-20250514
     - openai/gpt-4.1
   icon: 🌐
   toolsets:

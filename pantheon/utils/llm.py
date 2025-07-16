@@ -21,13 +21,21 @@ async def acompletion_openai(
     chunks = []
     _tools = tools or NOT_GIVEN
     _pcall = (tools is not None) or NOT_GIVEN
-    stream_manager = client.beta.chat.completions.stream(
-        model=model,
-        messages=messages,
-        tools=_tools,
-        parallel_tool_calls=_pcall,
-        response_format=response_format or {"type": "text"},
-    )
+    if model.startswith('o'):
+        stream_manager = client.beta.chat.completions.stream(
+            model=model,
+            messages=messages,
+            tools=_tools,
+            response_format=response_format or {"type": "text"},
+        )
+    else:
+        stream_manager = client.beta.chat.completions.stream(
+            model=model,
+            messages=messages,
+            tools=_tools,
+            parallel_tool_calls=_pcall,
+            response_format=response_format or {"type": "text"},
+        )
 
     while retry_times > 0:
         try:

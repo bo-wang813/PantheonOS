@@ -303,6 +303,30 @@ class Agent:
             message = complete_resp.choices[0].message.model_dump()
         return message
 
+    async def acompletion_with_models(self, history, tool_use, response_format, process_chunk, allow_transfer):
+        error_count = 0
+        for model in self.models:
+            if error_count > 0:
+                logger.warning(f"Try to use {model}, because of the error of the previous model.")
+            try:
+                message = await self.acompletion(
+                    history,
+                    model=model,
+                    tool_use=tool_use,
+                    response_format=response_format,
+                    process_chunk=process_chunk,
+                    allow_transfer=allow_transfer,
+                )
+                return message
+            except StopRunning:
+                raise
+            except Exception as e:
+                logger.error(f"Error completing with model {model}: {e}")
+                error_count += 1
+                continue
+        else:
+            return {}
+
     async def run_stream(
         self,
         messages: list[dict],
@@ -343,28 +367,13 @@ class Agent:
             _process_chunk = process_chunk
 
         while len(history) - init_len < max_turns:
-            message = {}
-
-            error_count = 0
-            for model in self.models:
-                if error_count > 0:
-                    logger.warning(f"Try to use {model}, because of the error of the previous model.")
-                try:
-                    message = await self.acompletion(
-                        history,
-                        model=model,
-                        tool_use=tool_use,
-                        response_format=Response,
-                        process_chunk=_process_chunk,
-                        allow_transfer=allow_transfer,
-                    )
-                    break
-                except StopRunning:
-                    raise
-                except Exception as e:
-                    logger.error(f"Error completing with model {model}: {e}")
-                    error_count += 1
-                    continue
+            message = await self.acompletion_with_models(
+                history,
+                tool_use,
+                Response,
+                _process_chunk,
+                allow_transfer,
+            )
 
             if Response is not None:
                 content = message.get("content")
@@ -380,7 +389,24 @@ class Agent:
                 await run_func(process_step_message, message)
 
             if not message.get("tool_calls"):
-                break
+                class IsComplete(BaseModel):
+                    is_complete: bool
+
+                resp = await self.acompletion_with_models(
+                    history + [{"role": "user", "content": "Is the task complete?"}],
+                    tool_use=False,
+                    response_format=IsComplete,
+                    process_chunk=None,
+                    allow_transfer=allow_transfer,
+                )
+                _content = resp.get("content")
+                _parsed = IsComplete.model_validate_json(_content)
+                if _parsed.is_complete:
+                    logger.info("Task is complete")
+                    break
+                else:
+                    logger.info("Task is not complete, continue to run")
+                    continue
 
             tool_messages = await self.handle_tool_calls(
                 message["tool_calls"],
