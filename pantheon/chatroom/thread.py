@@ -14,7 +14,8 @@ class Thread:
             team: PantheonTeam,
             memory: Memory,
             message: list[dict],
-            run_hook_timeout: int = 5,
+            run_hook_timeout: float = 1.0,
+            hook_retry_times: int = 5,
             ):
         self.id = str(uuid.uuid4())
         self.team = team
@@ -24,6 +25,7 @@ class Thread:
         self._process_step_message_hooks: list[Callable] = []
         self.response = None
         self.run_hook_timeout = run_hook_timeout
+        self.hook_retry_times = hook_retry_times
         self._stop_flag = False
 
     def add_chunk_hook(self, hook: Callable):
@@ -38,15 +40,21 @@ class Thread:
         for hook in self._process_chunk_hooks:
             async def _run_hook(hook: Callable, chunk: dict):
                 res = None
-                try:
-                    res = await asyncio.wait_for(
-                        run_func(hook, chunk),
-                        timeout=self.run_hook_timeout
-                    )
-                except Exception as e:
-                    logger.error(f"Error running process_chunk hook: {str(e)}")
+                error = None
+                for _ in range(self.hook_retry_times):
+                    try:
+                        res = await asyncio.wait_for(
+                            run_func(hook, chunk),
+                            timeout=self.run_hook_timeout
+                        )
+                        return res
+                    except Exception as e:
+                        logger.debug(f"Failed run hook {hook.__name__} for chunk {chunk}, retry {_ + 1} of {self.hook_retry_times}")
+                        error = e
+                        continue
+                else:
+                    logger.error(f"Error running process_chunk hook: {error}")
                     self._process_chunk_hooks.remove(hook)
-                return res
             _coros.append(_run_hook(hook, chunk))
         await asyncio.gather(*_coros)
 

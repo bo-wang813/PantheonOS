@@ -192,16 +192,27 @@ class Agent:
                     service_info = await proxy.fetch_service_info()
                     func_desc = service_info.functions_description[func_name]
                     function_args = [v.name for v in func_desc.inputs]
+                    async def agent_run(msg: AgentInput):
+                        logger.info(f"Running agent {self.name} with message {msg}")
+                        resp = await self.run(msg, allow_transfer=False, update_memory=False)
+                        return resp.content
                     if "__agent_run__" in function_args:
-                        async def agent_run(msg: AgentInput):
-                            resp = await self.run(msg, allow_transfer=False)
-                            return resp.content
-
                         params["__agent_run__"] = agent_run
                     if ("__client_id__" in function_args) and (client_id is not None):
                         params["__client_id__"] = client_id
                     async def _func(**params):
-                        return await proxy.invoke(func_name, parameters=params)
+                        resp = await proxy.invoke(func_name, parameters=params)
+                        if isinstance(resp, dict) and 'inner_call' in resp:
+                            inner_call = resp.pop('inner_call')
+                            name = inner_call['name']
+                            args = inner_call['args']
+                            result_field = inner_call['result_field']
+                            if name == "__agent_run__":
+                                result = await agent_run(args)
+                            else:
+                                result = await run_func(self.functions[name], **args)
+                            resp[result_field] = result
+                        return resp
                 start_time = time.time()
                 task = asyncio.create_task(run_func(_func, **params))
                 while True:

@@ -49,15 +49,19 @@ class Memory:
             last_message = self._messages[-1]
             if 'role' not in last_message:
                 self._messages.pop()
-            elif last_message["role"] == "user":
+                continue
+            if last_message["role"] == "user":
                 self._messages.pop()
-            elif last_message["role"] == "assistant":
+                continue
+            if last_message.get("content") is None:
+                self._messages.pop()
+                continue
+            if last_message["role"] == "assistant":
                 if last_message["tool_calls"]:
                     last_message["tool_calls"] = None
-
-            if last_message["role"] == "tool":
-                break
             if last_message["role"] == "assistant":
+                break
+            if last_message["role"] == "tool":
                 break
 
 
@@ -101,6 +105,8 @@ class MemoryManager:
                 memory = Memory.load(str(file))
                 logger.info(f"Loaded memory: {memory.name} from {file}")
                 self.memory_store[memory.id] = memory
+                if memory.extra_data.get("running"):
+                    memory.extra_data["running"] = False
             except Exception as e:
                 logger.error(f"Failed to load memory from {file}: {e}")
 
