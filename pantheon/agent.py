@@ -194,7 +194,12 @@ class Agent:
                     function_args = [v.name for v in func_desc.inputs]
                     async def agent_run(msg: AgentInput):
                         logger.info(f"Running agent {self.name} with message {msg}")
-                        resp = await self.run(msg, allow_transfer=False, update_memory=False)
+                        resp = await self.run(
+                            msg,
+                            allow_transfer=False,
+                            update_memory=False,
+                            model="openai/gpt-4.1",
+                        )
                         return resp.content
                     if "__agent_run__" in function_args:
                         params["__agent_run__"] = agent_run
