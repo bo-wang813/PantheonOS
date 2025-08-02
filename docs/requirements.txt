@@ -1,0 +1,12 @@
+# Documentation dependencies
+sphinx>=7.0.0
+sphinx-rtd-theme>=2.0.0
+furo>=2024.1.29
+sphinx-copybutton>=0.5.2
+sphinx-design>=0.5.0
+myst-parser>=2.0.0
+sphinx-autodoc-typehints>=1.25.0
+sphinxcontrib-mermaid>=0.9.0
+
+# Development mode with live reload
+sphinx-autobuild>=2021.3.14

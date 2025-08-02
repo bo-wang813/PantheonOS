@@ -1,0 +1,97 @@
+/* Custom styles for Pantheon Agents documentation */
+
+/* Enhanced code blocks for dark mode */
+@media (prefers-color-scheme: dark) {
+    .highlight pre {
+        background-color: #1e1e1e !important;
+    }
+    
+    .highlight .linenos {
+        background-color: #2d2d2d !important;
+    }
+}
+
+/* Grid cards enhancement */
+.sd-card {
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.sd-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Dark mode grid cards */
+@media (prefers-color-scheme: dark) {
+    .sd-card:hover {
+        box-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+    }
+}
+
+/* Admonition styling */
+.admonition {
+    border-radius: 0.25rem;
+    margin: 1rem 0;
+}
+
+/* Copy button enhancement */
+.highlight button.copybtn {
+    transition: opacity 0.2s;
+}
+
+/* Mermaid diagram support */
+.mermaid {
+    text-align: center;
+    margin: 1rem 0;
+}
+
+@media (prefers-color-scheme: dark) {
+    .mermaid {
+        filter: invert(0.85) hue-rotate(180deg);
+    }
+}
+
+/* Enhanced navigation */
+.sidebar-drawer {
+    transition: all 0.3s ease;
+}
+
+/* Better spacing for API docs */
+.py.class, .py.function, .py.method {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-background-border);
+}
+
+/* Logo adjustments */
+.sidebar-logo {
+    max-width: 200px;
+    margin: 0 auto;
+}
+
+/* Enhanced search */
+.sidebar-search-container {
+    margin-bottom: 1rem;
+}
+
+/* Responsive tables */
+table {
+    display: block;
+    overflow-x: auto;
+    margin: 1rem 0;
+}
+
+/* Print styles */
+@media print {
+    .sidebar-drawer, .mobile-header, .prev-next-area {
+        display: none !important;
+    }
+    
+    .content-icon-container {
+        display: none !important;
+    }
+    
+    main {
+        max-width: 100% !important;
+    }
+}
