@@ -1,396 +1,266 @@
 Scraper API
 ===========
 
-The Scraper API toolset provides advanced web scraping capabilities with features like JavaScript rendering, proxy rotation, and anti-bot bypass mechanisms for reliable data extraction.
+The Scraper API toolset provides web scraping capabilities through ScraperAPI, enabling Google search and web page fetching with built-in proxy rotation and anti-bot measures.
 
 Overview
 --------
 
+The ``ScraperToolSet`` provides two main tools:
+
+* **google_search**: Perform Google searches via ScraperAPI
+* **fetch_web_page**: Fetch and convert web pages to various formats
+
 Key features:
-- **JavaScript Rendering**: Scrape dynamic websites
-- **Proxy Rotation**: Automatic IP rotation
-- **Anti-Bot Bypass**: Handle CAPTCHAs and rate limits
-- **Structured Extraction**: CSS and XPath selectors
-- **Session Management**: Maintain cookies and state
+
+* **Proxy Rotation**: Automatic IP rotation via ScraperAPI
+* **Anti-Bot Protection**: Built-in handling of anti-scraping measures
+* **Format Conversion**: Output as markdown, HTML, or plain text
+* **Concurrent Fetching**: Fetch multiple URLs in parallel
+* **Rate Limit Handling**: Automatic retry and rate limit management
+
+Prerequisites
+-------------
+
+To use this toolset, you need:
+
+1. A ScraperAPI account and API key
+2. Set the environment variable: ``SCRAPER_API_KEY``
 
 Basic Usage
 -----------
 
-Setting Up Scraper API
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from pantheon.toolsets.scraper import ScraperAPIToolSet
-   from pantheon.agent import Agent
-   
-   # Initialize Scraper API toolset
-   scraper_tools = ScraperAPIToolSet(
-       api_key="your_scraper_api_key",
-       render_js=True,
-       premium_proxy=True
-   )
-   
-   # Create agent with scraping capabilities
-   scraper_agent = Agent(
-       name="data_scraper",
-       instructions="Extract data from websites using advanced scraping techniques.",
-       model="gpt-4o-mini"
-   )
-   await scraper_agent.remote_toolset(scraper_tools.service_id)
-
-Basic Scraping
-~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Scrape a simple page
-   response = await scraper_agent.run([{
-       "role": "user",
-       "content": "Extract all product names and prices from https://example-shop.com/products"
-   }])
-   
-   # Agent uses ScraperAPI to:
-   # 1. Render JavaScript
-   # 2. Wait for dynamic content
-   # 3. Extract data using selectors
-   # 4. Return structured results
-
-Advanced Features
------------------
-
-JavaScript-Heavy Sites
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Configure for SPA/React sites
-   spa_scraper = ScraperAPIToolSet(
-       api_key="your_key",
-       render_js=True,
-       wait_for_selector=".product-loaded",  # Wait for specific element
-       js_scenario={
-           "actions": [
-               {"type": "click", "selector": ".load-more-btn"},
-               {"type": "wait", "value": 2000},
-               {"type": "scroll", "value": "bottom"}
-           ]
-       }
-   )
-   
-   dynamic_agent = Agent(
-       name="spa_scraper",
-       instructions="Scrape single-page applications with dynamic content loading."
-   )
-
-Session-Based Scraping
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # Maintain session for multi-page scraping
-   session_scraper = Agent(
-       name="session_scraper",
-       instructions="""Scrape data that requires login or session:
-       1. Navigate to login page
-       2. Submit credentials
-       3. Maintain session cookies
-       4. Scrape protected pages"""
-   )
-   
-   # Agent handles:
-   # - Form submission
-   # - Cookie persistence
-   # - Session validation
-   # - Multi-step workflows
-
-Structured Data Extraction
+Setting Up Scraper Toolset
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   extractor_agent = Agent(
-       name="structured_extractor",
-       instructions="Extract data using CSS selectors and XPath."
-   )
+   from pantheon.toolsets.scraper import ScraperToolSet
+   from pantheon.toolsets.utils.toolset import run_toolsets
+   from pantheon.agent import Agent
    
-   response = await extractor_agent.run([{
+   # Create scraper toolset
+   scraper_tools = ScraperToolSet("scraper")
+   
+   # Run as service
+   async with run_toolsets([scraper_tools]):
+       # Create agent with scraping capabilities
+       agent = Agent(
+           name="web_scraper",
+           instructions="Search the web and extract information from websites.",
+           model="gpt-4.1-mini"
+       )
+       
+       # Connect to scraper toolset
+       await agent.remote_toolset(service_name="scraper")
+
+Command Line Deployment
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the scraper toolset from command line::
+
+    # Set API key
+    export SCRAPER_API_KEY=your_api_key_here
+    
+    # Run toolset
+    python -m pantheon.toolsets.scraper --service-name scraper
+
+Google Search
+~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # Perform Google search
+   response = await agent.run([{
        "role": "user",
-       "content": """Extract from product pages:
-       - Title: h1.product-title
-       - Price: span.price-now
-       - Description: div.product-description
-       - Images: img.product-image@src
-       - Reviews: div.review-item"""
+       "content": "Search Google for recent news about artificial intelligence"
    }])
-
-Common Use Cases
-----------------
-
-E-commerce Monitoring
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   price_monitor = Agent(
-       name="price_monitor",
-       instructions="""Monitor product prices across multiple sites:
-       1. Scrape product pages
-       2. Extract current prices
-       3. Compare with historical data
-       4. Alert on significant changes"""
-   )
    
-   # Monitor configuration
-   monitor_config = {
-       "products": [
-           {
-               "url": "https://shop1.com/product/123",
-               "selectors": {
-                   "price": ".current-price",
-                   "stock": ".availability"
-               }
-           }
-       ],
-       "check_interval": 3600  # 1 hour
-   }
+   # Agent uses google_search tool with parameters:
+   # - query: "recent news about artificial intelligence"
+   # - max_results: 10
+   # - country: "us"
+   # - language: "en"
 
-Real Estate Listings
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   realestate_scraper = Agent(
-       name="property_scraper",
-       instructions="""Extract real estate listings:
-       1. Search properties by criteria
-       2. Extract listing details
-       3. Download images
-       4. Compile into database"""
-   )
-   
-   # Extract comprehensive data
-   listing_data = {
-       "address": "h1.property-address",
-       "price": "span.listing-price",
-       "bedrooms": "div.bed-count",
-       "bathrooms": "div.bath-count",
-       "sqft": "span.square-feet",
-       "description": "div.property-description",
-       "images": "img.property-photo@src",
-       "agent": "div.agent-info"
-   }
-
-Job Market Analysis
-~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   job_scraper = Agent(
-       name="job_market_analyst",
-       instructions="""Analyze job market trends:
-       1. Scrape job boards
-       2. Extract job details
-       3. Analyze requirements
-       4. Track salary trends"""
-   )
-   
-   # Scrape multiple job sites
-   job_sites = [
-       {
-           "site": "indeed",
-           "search_url": "https://indeed.com/jobs?q={query}",
-           "selectors": {
-               "title": ".jobTitle",
-               "company": ".companyName",
-               "salary": ".salary-snippet",
-               "description": ".job-snippet"
-           }
-       }
-   ]
-
-Advanced Techniques
--------------------
-
-Pagination Handling
-~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   class PaginationScraper(Agent):
-       async def scrape_all_pages(self, base_url: str, max_pages: int = None):
-           """Scrape all pages from paginated results."""
-           all_data = []
-           page = 1
-           
-           while True:
-               # Scrape current page
-               url = f"{base_url}?page={page}"
-               data = await self.scrape_page(url)
-               
-               if not data or (max_pages and page >= max_pages):
-                   break
-                   
-               all_data.extend(data)
-               page += 1
-               
-               # Respect rate limits
-               await asyncio.sleep(2)
-           
-           return all_data
-
-Anti-Detection Strategies
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   stealth_scraper = ScraperAPIToolSet(
-       api_key="your_key",
-       # Rotation settings
-       country_code="us",
-       premium_proxy=True,
-       
-       # Browser fingerprinting
-       headers={
-           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
-           "Accept-Language": "en-US,en;q=0.9",
-           "Accept-Encoding": "gzip, deflate, br"
-       },
-       
-       # Behavior mimicking
-       random_delay=(1000, 3000),  # Random delay between actions
-       mouse_movements=True         # Simulate mouse movements
-   )
-
-Parallel Scraping
+Web Page Fetching
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   class ParallelScraper(Agent):
-       async def scrape_multiple(self, urls: List[str], max_concurrent: int = 5):
-           """Scrape multiple URLs in parallel."""
-           semaphore = asyncio.Semaphore(max_concurrent)
-           
-           async def scrape_with_limit(url):
-               async with semaphore:
-                   return await self.scrape_url(url)
-           
-           tasks = [scrape_with_limit(url) for url in urls]
-           results = await asyncio.gather(*tasks, return_exceptions=True)
-           
-           return [r for r in results if not isinstance(r, Exception)]
+   # Fetch single page
+   response = await agent.run([{
+       "role": "user",
+       "content": "Fetch the content from https://example.com/article"
+   }])
+   
+   # Fetch multiple pages
+   response = await agent.run([{
+       "role": "user",
+       "content": "Fetch content from these 3 URLs and summarize each"
+   }])
 
-Error Handling
---------------
+Tool Parameters
+---------------
 
-Retry Logic
-~~~~~~~~~~~
+google_search
+~~~~~~~~~~~~~
+
+* ``query`` (str): The search query
+* ``max_results`` (int): Maximum number of results (default: 10)
+* ``country`` (str): Country code for search (default: "us")
+* ``language`` (str): Language code for search (default: "en")
+* ``timeout`` (float): Request timeout in seconds (default: 30.0)
+
+fetch_web_page
+~~~~~~~~~~~~~~
+
+* ``urls`` (List[str]): List of URLs to fetch
+* ``output_format`` (str): Output format - "markdown", "html", or "text" (default: "markdown")
+* ``timeout`` (float): Timeout per request in seconds (default: 30.0)
+
+Common Use Cases
+----------------
+
+Research Assistant
+~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   class ResilientScraper(Agent):
-       async def scrape_with_retry(self, url: str, max_retries: int = 3):
-           """Scrape with exponential backoff retry."""
-           for attempt in range(max_retries):
-               try:
-                   result = await self.scrape(url)
-                   if self.validate_result(result):
-                       return result
-               except Exception as e:
-                   if attempt == max_retries - 1:
-                       raise
-                   wait_time = (2 ** attempt) + random.uniform(0, 1)
-                   await asyncio.sleep(wait_time)
+   researcher = Agent(
+       name="research_assistant",
+       instructions="""Research topics by:
+       1. Search Google for relevant information
+       2. Fetch top results
+       3. Extract and summarize key points
+       4. Provide sources""",
+       model="gpt-4.1"
+   )
+   
+   response = await researcher.run([{
+       "role": "user",
+       "content": "Research the latest developments in quantum computing"
+   }])
 
-CAPTCHA Handling
+News Aggregator
+~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   news_agent = Agent(
+       name="news_aggregator",
+       instructions="""Aggregate news on specific topics:
+       1. Search for recent news articles
+       2. Fetch article content
+       3. Summarize key stories
+       4. Identify trends""",
+       model="gpt-4.1"
+   )
+   
+   # Daily news briefing
+   response = await news_agent.run([{
+       "role": "user",
+       "content": "Create a daily tech news briefing"
+   }])
+
+Content Monitor
+~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   monitor_agent = Agent(
+       name="content_monitor",
+       instructions="""Monitor web content:
+       1. Fetch specified URLs
+       2. Compare with previous versions
+       3. Identify changes
+       4. Alert on significant updates""",
+       model="gpt-4.1-mini"
+   )
+   
+   # Monitor competitor websites
+   urls_to_monitor = [
+       "https://competitor1.com/pricing",
+       "https://competitor2.com/features"
+   ]
+
+Advanced Patterns
+-----------------
+
+Batch Processing
 ~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   captcha_handler = Agent(
-       name="captcha_solver",
-       instructions="""Handle CAPTCHA challenges:
-       1. Detect CAPTCHA presence
-       2. Use CAPTCHA solving service
-       3. Submit solution
-       4. Verify success"""
+   batch_scraper = Agent(
+       name="batch_processor",
+       instructions="Process multiple URLs efficiently"
    )
    
-   # Integration with CAPTCHA services
-   scraper_config = {
-       "captcha_solver": "2captcha",
-       "solver_api_key": "your_2captcha_key",
-       "auto_solve": True
-   }
+   # Process URLs in batches
+   urls = ["https://site1.com", "https://site2.com", "https://site3.com"]
+   response = await batch_scraper.run([{
+       "role": "user",
+       "content": f"Fetch and analyze these URLs: {urls}"
+   }])
 
-Data Processing
----------------
-
-Clean and Structure
-~~~~~~~~~~~~~~~~~~~
+Search and Analyze
+~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   data_processor = Agent(
-       name="scrape_processor",
-       instructions="""Process scraped data:
-       1. Clean HTML artifacts
-       2. Normalize formats
-       3. Validate data types
-       4. Handle missing values"""
+   analyst = Agent(
+       name="search_analyst",
+       instructions="""For each search:
+       1. Search Google for the topic
+       2. Fetch top 5 results
+       3. Extract key information
+       4. Synthesize findings
+       5. Provide analysis""",
+       model="gpt-4.1"
    )
    
-   # Processing pipeline
-   async def process_scraped_data(raw_data):
-       # Clean text
-       cleaned = clean_html_tags(raw_data)
-       
-       # Parse numbers
-       prices = parse_prices(cleaned['prices'])
-       
-       # Standardize dates
-       dates = standardize_dates(cleaned['dates'])
-       
-       # Validate
-       return validate_data_quality(processed)
+   # Comprehensive analysis
+   response = await analyst.run([{
+       "role": "user",
+       "content": "Analyze market trends for electric vehicles in 2024"
+   }])
 
-Export Formats
-~~~~~~~~~~~~~~
+Multi-Language Support
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   exporter_agent = Agent(
-       name="data_exporter",
-       instructions="Export scraped data in various formats."
+   multilingual_agent = Agent(
+       name="multilingual_scraper",
+       instructions="Search and fetch content in multiple languages"
    )
    
-   # Export options
-   export_formats = {
-       "csv": lambda data: pd.DataFrame(data).to_csv(),
-       "json": lambda data: json.dumps(data, indent=2),
-       "excel": lambda data: pd.DataFrame(data).to_excel(),
-       "database": lambda data: insert_to_db(data)
-   }
+   # Search in different languages/countries
+   searches = [
+       {"query": "technologie IA", "country": "fr", "language": "fr"},
+       {"query": "KI Technologie", "country": "de", "language": "de"},
+       {"query": "AI technology", "country": "us", "language": "en"}
+   ]
+
+Error Handling
+--------------
+
+The toolset includes built-in error handling:
+
+1. **Missing API Key**: Raises ValueError if SCRAPER_API_KEY not set
+2. **HTTP Errors**: Logs errors and returns empty content for failed URLs
+3. **Timeout Handling**: Configurable timeout with graceful failure
+4. **Batch Resilience**: Failed URLs don't stop processing of others
 
 Best Practices
 --------------
 
-1. **Respect robots.txt**: Check site policies
-2. **Rate Limiting**: Add delays between requests
-3. **Error Recovery**: Implement robust error handling
-4. **Data Validation**: Verify scraped data quality
-5. **Legal Compliance**: Ensure scraping is allowed
-6. **Resource Management**: Clean up sessions
-
-Performance Optimization
-------------------------
-
-- Use appropriate concurrency limits
-- Cache static content
-- Minimize JavaScript rendering when not needed
-- Batch similar requests
-- Use webhook callbacks for long operations
+1. **API Key Security**: Store API key in environment variables, not code
+2. **Rate Limiting**: Be mindful of ScraperAPI rate limits
+3. **Error Recovery**: Check for empty results and handle gracefully
+4. **Batch Efficiency**: Use batch fetching for multiple URLs
+5. **Format Selection**: Choose appropriate output format for your needs
+6. **Timeout Configuration**: Adjust timeout based on target site responsiveness
 
 Integration Examples
 --------------------
@@ -400,25 +270,41 @@ With Data Analysis
 
 .. code-block:: python
 
-   # Scrape and analyze
-   market_analyst = Agent(
-       name="market_scraper",
-       instructions="Scrape market data and perform analysis."
+   # Combine with Python toolset for analysis
+   data_scraper = Agent(
+       name="data_analyst",
+       instructions="Scrape web data and analyze with Python"
    )
-   await market_analyst.remote_toolset(scraper_tools.service_id)
-   await market_analyst.remote_toolset(python_tools.service_id)
+   await data_scraper.remote_toolset(service_name="scraper")
+   await data_scraper.remote_toolset(service_name="python")
 
-With Database Storage
-~~~~~~~~~~~~~~~~~~~~~
+With File Storage
+~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Scrape to database pipeline
-   db_scraper = Agent(
-       name="database_scraper",
-       instructions="""Scrape data and store in database:
-       1. Extract data from websites
-       2. Transform to schema
-       3. Insert into database
-       4. Update existing records"""
+   # Save scraped content to files
+   archiver = Agent(
+       name="web_archiver",
+       instructions="Scrape and archive web content",
+       tools=[write_file]
    )
+   await archiver.remote_toolset(service_name="scraper")
+
+Performance Tips
+----------------
+
+* Use markdown format for better structure extraction
+* Batch URLs to reduce API calls
+* Set appropriate timeouts for slow sites
+* Cache results when appropriate
+* Use country/language parameters for localized results
+
+Limitations
+-----------
+
+* Requires valid ScraperAPI subscription
+* Subject to ScraperAPI rate limits
+* Cannot handle sites requiring authentication
+* No JavaScript interaction capabilities
+* Limited to ScraperAPI supported features
