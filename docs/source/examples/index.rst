@@ -169,6 +169,16 @@ Others
       ^^^
       Enhanced multi-agent paper analysis with better structure
 
+   .. grid-item-card::
+      :img-top: ../_static/pantheon.png
+      :link: sc_analysis_cli
+      :link-type: doc
+      :text-align: center
+
+      **Single-Cell Analysis CLI**
+      ^^^
+      CLI assistant for single-cell/spatial genomics analysis with RAG
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -188,3 +198,4 @@ Others
    guess_number
    paper_reporter
    paper_reporter_v2
+   sc_analysis_cli
