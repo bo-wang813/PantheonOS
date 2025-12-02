@@ -5,15 +5,18 @@ This module provides different team patterns for coordinating multiple agents.
 
 from .base import Team
 from .moa import MoATeam
-from .pantheon import PantheonTeam
 from .sequential import SequentialTeam
 from .swarm import SwarmCenterTeam, SwarmTeam
+from .aat import AgentAsToolTeam
+from .pantheon import PantheonTeam  # Chatroom and Repl use this
+
 
 __all__ = [
     "Team",
     "SwarmTeam",
     "SwarmCenterTeam",
-    "PantheonTeam",
     "SequentialTeam",
     "MoATeam",
+    "AgentAsToolTeam",
+    "PantheonTeam",
 ]

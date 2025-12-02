@@ -108,7 +108,7 @@ class PantheonTeam(Team):
 
     Unified architecture with no special roles:
     - Agents: Defined directly in the chatroom template
-      * All treated equally - all have list_agents(), call_agent(), transfer_to_*()
+      * All treated equally - all have list_agents(), call_agent(), transfer_to_agent()
       * Can control their own execution and delegate to other agents
     - Sub-Agents: Loaded from agents.yaml library
       * Computation frameworks/tools
@@ -330,33 +330,33 @@ class PantheonTeam(Team):
             await _add_call_agent_tool_to_agent(agent)
 
     async def add_transfer_tools_to_agents(self):
-        """Add transfer_to_* tools to all agents for inter-agent communication.
+        """Add transfer tool to all agents for inter-agent communication.
 
         Each agent can transfer to other agents (not sub-agents).
         This enables agents to hand off tasks to each other.
         """
-        # For each target agent, create a transfer function and register it with all source agents
-        for target_agent in self.team_agents:
-            # Create transfer function using closure
-            # Capture target_agent.name via default parameter to avoid late binding issues
-            def transfer_func(
-                target_name: str = target_agent.name,
-            ):
-                """Transfer to the target agent."""
+
+        def make_transfer_func(source_name: str):
+            """Create a transfer function with source agent name captured in closure."""
+
+            def transfer_to_agent(target_name: str):
+                """Transfer the control to another agent by name.
+
+                Args:
+                    target_name: Name of the agent to transfer to.
+                """
+                if target_name not in self.agents:
+                    raise ValueError(f"Unknown agent: {target_name}")
+                if target_name == source_name:
+                    raise ValueError("Cannot transfer to self")
                 return self.agents[target_name]
 
-            agent_func_name = target_agent.name.replace(" ", "_").lower()
-            func_name = f"transfer_to_{agent_func_name}"
-            transfer_func.__name__ = func_name
-            transfer_func.__doc__ = f"Transfer to {target_agent.name}."
+            return transfer_to_agent
 
-            # Register this transfer function with all source agents (except the target itself)
-            for source_agent in self.team_agents:
-                if source_agent.name == target_agent.name:
-                    continue  # Can't transfer to self
-
-                # Register the same function as a tool for each source agent
-                await run_func(source_agent.tool, transfer_func)
+        # Register a single transfer tool for each agent
+        for source_agent in self.team_agents:
+            transfer_func = make_transfer_func(source_agent.name)
+            await run_func(source_agent.tool, transfer_func)
 
     async def async_setup(self):
         """Setup team by enabling appropriate tools based on team composition.

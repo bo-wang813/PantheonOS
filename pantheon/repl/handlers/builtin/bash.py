@@ -1,3 +1,4 @@
+import subprocess
 from ..base import CommandHandler
 
 
@@ -15,12 +16,10 @@ class BashCommandHandler(CommandHandler):
     async def _execute_direct_bash(self, command: str):
         """Execute bash command directly without LLM analysis"""
         # TODO: Use the shell toolset attached to the agent
-        import subprocess
-        import shlex
-        
+
         try:
             self.console.print(f"[dim]Executing:[/dim] {command}")
-            
+
             # Use subprocess to execute the command
             process = subprocess.Popen(
                 command,
@@ -30,21 +29,21 @@ class BashCommandHandler(CommandHandler):
                 text=True,
                 universal_newlines=True
             )
-            
+
             # Get output
             stdout, stderr = process.communicate()
-            
+
             # Print output
             if stdout:
                 self.console.print(stdout.strip())
             if stderr:
                 self.console.print(f"[red]{stderr.strip()}[/red]")
-            
+
             # Show return code if non-zero
             if process.returncode != 0:
                 self.console.print(f"[yellow]Exit code: {process.returncode}[/yellow]")
-                
+
         except Exception as e:
             self.console.print(f"[red]Error executing command: {str(e)}[/red]")
-        
+
         self.console.print()  # Add spacing
