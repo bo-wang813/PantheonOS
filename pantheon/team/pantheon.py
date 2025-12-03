@@ -104,72 +104,53 @@ def _build_child_context_metadata(
 
 
 class PantheonTeam(Team):
-    """Pantheon team structure with two types of agents.
+    """Pantheon team structure with unified agent architecture.
 
-    Unified architecture with no special roles:
-    - Agents: Defined directly in the chatroom template
-      * All treated equally - all have list_agents(), call_agent(), transfer_to_agent()
-      * Can control their own execution and delegate to other agents
-    - Sub-Agents: Loaded from agents.yaml library
-      * Computation frameworks/tools
-      * Support: call_agent() from agents only
-      * Stateless, reusable, cannot be transferred to
+    All agents are treated equally with the same capabilities:
+    - list_agents(): Discover other agents in the team
+    - call_agent(): Delegate tasks to other agents
+    - transfer_to_agent(): Hand off control to another agent
 
-    Features enabled based on composition:
-    - Agent Transfer: When multiple agents (len > 1)
-    - Sub-Agent Discovery: When sub_agents are loaded
+    Features enabled when team has multiple agents (len > 1).
     """
 
     def __init__(
         self,
         agents: list[Agent | RemoteAgent],
-        sub_agents: list[Agent | RemoteAgent] = None,
         use_summary: bool = False,
         max_delegate_depth: int | None = 5,
+        allow_transfer: bool = True,
     ):
-        """Initialize PantheonTeam with clear agent type separation.
+        """Initialize PantheonTeam with unified agent architecture.
 
         Args:
-            agents: Agents defined directly in the template
-            sub_agents: Agents loaded from agents.yaml library (computation frameworks)
-            use_summary: If True, automatically generate and prepend a context summary
-                         to sub-agent instructions.
+            agents: List of agents in the team.
+            use_summary: If True, generate and prepend context summary
+                         when delegating tasks.
+            max_delegate_depth: Maximum depth for nested call_agent calls.
+            allow_transfer: If True, add transfer_to_agent tool to agents.
 
         Note:
-            All agents are equal - the first one is commonly called triage for convention,
-            but receives no special treatment or capabilities.
+            All agents are equal - the first one is used as the default
+            entry point but receives no special treatment.
         """
         if not agents:
             raise ValueError("Team must have at least one agent")
 
-        self.team_agents = agents  # Main team agents
-        self.sub_agents = sub_agents or []  # Track sub-agents separately
+        self.team_agents = agents
         self.use_summary = use_summary
         self.max_delegate_depth = max_delegate_depth
+        self.allow_transfer = allow_transfer
 
-        # Initialize parent with all agents (team + sub)
-        all_agents = agents + (sub_agents or [])
-        super().__init__(all_agents)
+        super().__init__(agents)
 
-        # Mark which agents are main vs sub (used to determine tool availability)
-        self._agent_names: set[str] = {a.name for a in self.team_agents}
-        self._sub_agent_names: set[str] = {a.name for a in self.sub_agents}
-        # Determine which features to enable based on team composition
-        self.has_transfer_agents = len(self.team_agents) > 1  # More than just one agent
-        self.has_sub_agents = len(self.sub_agents) > 0
-
-        # Mark all agents as capable of delegating. Sub-agents stay in SUBAGENT mode
-        # but can now coordinate with peers through call_agent.
+        # All agents have the same capabilities
         for agent in self.team_agents:
             if isinstance(agent, Agent):
                 agent.system_prompt_mode = SystemPromptMode.FULL
                 agent.can_delegate = True
-        for agent in self.sub_agents:
-            if isinstance(agent, Agent):
-                agent.system_prompt_mode = SystemPromptMode.SUBAGENT
-                agent.can_delegate = True
 
-        # Keep triage reference for backward compatibility (it's the first agent)
+        # Keep triage reference for backward compatibility (first agent)
         self.triage = self.team_agents[0]
 
     def get_active_agent(self, memory: Memory) -> Agent | RemoteAgent:
@@ -189,12 +170,10 @@ class PantheonTeam(Team):
     async def add_list_agents_tool(self):
         """Add list_agents() tool to all agents."""
 
-        # Add list_agents() to all agents (team + sub) so everyone can discover peers
         def get_agents_info(exclude_slug: str | None = None) -> list[dict]:
+            """Get info for all agents except the one with exclude_slug."""
             agents_info = []
             for agent_name, agent in self.agents.items():
-                if agent_name not in self._sub_agent_names:
-                    continue
                 slug = _slugify(agent_name)
                 if slug == exclude_slug:
                     continue
@@ -204,32 +183,38 @@ class PantheonTeam(Team):
                 agents_info.append(info)
             return agents_info
 
-        for agent in self.team_agents + self.sub_agents:
+        for agent in self.team_agents:
             caller_slug = _slugify(agent.name)
 
-            def list_agents():
-                """List all available sub-agents and their capabilities."""
-                agents_info = get_agents_info(exclude_slug=caller_slug)
-                if not agents_info:
-                    return "No sub-agents available."
+            def make_list_agents(exclude: str):
+                """Create list_agents function with caller excluded."""
 
-                output = "**Available Sub-Agents:**\n\n"
-                for info in agents_info:
-                    output += f"- **{info['name']}**"
-                    if "description" in info:
-                        output += f": {info['description']}"
-                    output += "\n"
+                def list_agents():
+                    """List all available agents and their capabilities."""
+                    agents_info = get_agents_info(exclude_slug=exclude)
+                    if not agents_info:
+                        return "No other agents available."
 
-                return output
+                    output = "**Available Agents:**\n\n"
+                    for info in agents_info:
+                        output += f"- **{info['name']}**"
+                        if "description" in info:
+                            output += f": {info['description']}"
+                        output += "\n"
 
-            list_agents.__name__ = "list_agents"
-            list_agents.__doc__ = (
-                "List all available sub-agents and their capabilities. "
-                "Use this to understand which agents you can delegate to via call_agent(). "
-                "Returns agent names and descriptions of their expertise."
+                    return output
+
+                return list_agents
+
+            list_agents_func = make_list_agents(caller_slug)
+            list_agents_func.__name__ = "list_agents"
+            list_agents_func.__doc__ = (
+                "List all available agents and their capabilities. "
+                "Use this to discover agents you can delegate to via call_agent() "
+                "or transfer control to via transfer_to_agent()."
             )
 
-            await run_func(agent.tool, list_agents)
+            await run_func(agent.tool, list_agents_func)
 
     async def add_unified_call_agent_tool(self):
         """Add unified call_agent(agent_name, instruction) tool for agents."""
@@ -244,16 +229,16 @@ class PantheonTeam(Team):
                 instruction: str,
                 context_variables: dict | None = None,
             ):
-                """Delegate a task to a sub-agent in the team.
+                """Delegate a task to another agent in the team.
 
                 Args:
-                    agent_name: Name of the target sub-agent to delegate to
-                    instruction: Clear task description for the target agent
+                    agent_name: Name of the target agent to delegate to.
+                    instruction: Clear task description for the target agent.
 
                 Returns:
-                    Response content produced by the delegated sub-agent.
+                    Response content produced by the target agent.
                 """
-                target_agent = self.get_taget_agent(agent_name, instruction)
+                target_agent = self.get_target_agent(agent_name, instruction)
                 run_context = get_current_run_context()
 
                 context_variables = dict(context_variables or {})
@@ -268,7 +253,7 @@ class PantheonTeam(Team):
                 child_context_variables = dict(context_variables)
                 child_context_variables["_metadata"] = child_metadata
 
-                # Build history summary for sub-agent task message
+                # Build task message with optional history summary
                 task_message = await create_delegation_task_message(
                     history=run_context.memory.get_messages(None)
                     if run_context.memory
@@ -314,69 +299,60 @@ class PantheonTeam(Team):
                 content = response.content if response else ""
                 return content
 
-            # Set proper function metadata for LLM
             call_agent.__name__ = "call_agent"
             call_agent.__doc__ = (
-                "Delegate a task to a sub-agent in the team. "
-                "Pass the agent_name and clear instruction describing context, what to do and the desired output. "
-                "When passing the instruction, you should provide all related information for the sub-agent to execute the task."
+                "Delegate a task to another agent in the team. "
+                "Pass the agent_name and a clear instruction describing the "
+                "context, what to do, and the desired output."
             )
 
-            # Register tool
             await run_func(calling_agent.tool, call_agent)
 
-        # Add call_agent() to all agents (team + sub-agents)
-        for agent in self.team_agents + self.sub_agents:
+        for agent in self.team_agents:
             await _add_call_agent_tool_to_agent(agent)
 
     async def add_transfer_tools_to_agents(self):
-        """Add transfer tool to all agents for inter-agent communication.
-
-        Each agent can transfer to other agents (not sub-agents).
-        This enables agents to hand off tasks to each other.
-        """
+        """Add transfer tool to all agents for inter-agent communication."""
 
         def make_transfer_func(source_name: str):
-            """Create a transfer function with source agent name captured in closure."""
+            """Create a transfer function with source agent name captured."""
 
             def transfer_to_agent(target_name: str):
-                """Transfer the control to another agent by name.
+                """Transfer control to another agent by name.
 
                 Args:
                     target_name: Name of the agent to transfer to.
                 """
-                if target_name not in self.agents:
+                # Normalize target_name to match agent lookup
+                normalized = target_name.replace(" ", "_").lower()
+                agent_map = {
+                    aname.replace(" ", "_").lower(): agent
+                    for aname, agent in self.agents.items()
+                }
+                if normalized not in agent_map:
                     raise ValueError(f"Unknown agent: {target_name}")
-                if target_name == source_name:
+                if normalized == source_name.replace(" ", "_").lower():
                     raise ValueError("Cannot transfer to self")
-                return self.agents[target_name]
+                return agent_map[normalized]
 
             return transfer_to_agent
 
-        # Register a single transfer tool for each agent
         for source_agent in self.team_agents:
             transfer_func = make_transfer_func(source_agent.name)
             await run_func(source_agent.tool, transfer_func)
 
     async def async_setup(self):
-        """Setup team by enabling appropriate tools based on team composition.
+        """Setup team by enabling inter-agent tools when multiple agents exist.
 
-        All agents are already initialized in __init__.
-        This method adds tools based on feature enablement:
-        - transfer_to_*(): Agents can transfer to other agents
-        - list_agents(): All agents can discover available sub-agents
-        - call_agent(): All agents can delegate tasks to sub-agents
+        Tools added when len(agents) > 1:
+        - transfer_to_agent(): Transfer control to another agent (if allow_transfer)
+        - list_agents(): Discover other agents in the team
+        - call_agent(): Delegate tasks to other agents
         """
-        # Add transfer_to_* tools to enable agent communication
-        if self.has_transfer_agents:
-            await self.add_transfer_tools_to_agents()
-
-        # Add list_agents() to all agents if there are sub-agents to discover
-        if self.has_sub_agents:
+        if len(self.team_agents) > 1:
+            if self.allow_transfer:
+                await self.add_transfer_tools_to_agents()
             await self.add_list_agents_tool()
-
-        # Add call_agent() to all agents if there are agents to delegate to
-        if self.has_transfer_agents or self.has_sub_agents:
             await self.add_unified_call_agent_tool()
 
     async def run(self, msg: AgentInput, memory: Memory | None = None, **kwargs):
@@ -404,28 +380,33 @@ class PantheonTeam(Team):
             else:
                 return resp
 
-    def get_taget_agent(self, agent_name: str, instruction: str) -> Agent:
-        # real agent name is like : Data Analyst, but the llm may call with data_analyst
+    def get_target_agent(self, agent_name: str, instruction: str) -> Agent:
+        """Get target agent by name for delegation.
+
+        Args:
+            agent_name: Name of the target agent (supports slug format).
+            instruction: Task instruction (must not be empty).
+
+        Returns:
+            The target Agent instance.
+        """
+        # Normalize agent name (e.g., "Data Analyst" -> "data_analyst")
         all_agents = {
             aname.replace(" ", "_").lower(): agent
             for aname, agent in self.agents.items()
         }
         agent_name = agent_name.replace(" ", "_").lower()
-        # Validate agent exists and is a sub-agent
+
         if agent_name not in all_agents:
             raise ValueError(
-                f"Agent '{agent_name}' not found. Available agents: {list(all_agents.keys())}"
+                f"Agent '{agent_name}' not found. "
+                f"Available: {list(all_agents.keys())}"
             )
 
         if not instruction or not instruction.strip():
             raise ValueError("Instruction cannot be empty")
 
         target_agent = all_agents[agent_name]
-        if target_agent.name not in self._sub_agent_names:
-            raise ValueError(
-                f"Agent '{agent_name}' is not a sub-agent. "
-                f"Sub-agents: {sorted(self._sub_agent_names)}"
-            )
         if not isinstance(target_agent, Agent):
             raise NotImplementedError(
                 "call_agent currently supports only local Agent instances"

@@ -337,7 +337,8 @@ class ChatRoom(ToolSet):
         sub_agents = await create_agents_from_template(
             endpoint_service, sub_agent_configs
         )
-        logger.info(f"Created {len(agents)} agents and {len(sub_agents)} sub-agents")
+        all_agents = agents + sub_agents
+        logger.info(f"Created {len(all_agents)} agents")
 
         # ===== STEP 4: Add plan toolset to agents (if chat_id provided) =====
         if chat_id:
@@ -347,18 +348,11 @@ class ChatRoom(ToolSet):
                 logger.debug(f"Agent '{agent.name}': Added PlanModeToolSet")
 
         # ===== STEP 5: Create and setup team =====
-        team = PantheonTeam(
-            agents=agents,
-            sub_agents=sub_agents,
-        )
+        team = PantheonTeam(agents=all_agents)
         await team.async_setup()
 
-        feature_list = []
-        if team.has_transfer_agents:
-            feature_list.append(f"transfer ({len(team.team_agents)} agents)")
-        if team.has_sub_agents:
-            feature_list.append(f"discovery ({len(team.sub_agents)} sub-agents)")
-        features = " + ".join(feature_list) if feature_list else "none"
+        num_agents = len(team.team_agents)
+        features = f"{num_agents} agents" if num_agents > 1 else "single agent"
 
         logger.info(f"✅ Team '{template_name}' created (Features: {features})")
         return team
@@ -563,8 +557,7 @@ class ChatRoom(ToolSet):
                 "success": True,
                 "agents": [],
                 "can_switch_agents": False,
-                "has_sub_agents": False,
-                "has_transfer_agents": False,
+                "has_transfer": False,
             }
 
         # Get the appropriate team for this chat
@@ -579,8 +572,7 @@ class ChatRoom(ToolSet):
             "success": True,
             "agents": [get_agent_info(a) for a in agents_to_expose],
             "can_switch_agents": len(team.team_agents) > 1,
-            "has_sub_agents": team.has_sub_agents,
-            "has_transfer_agents": team.has_transfer_agents,
+            "has_transfer": len(team.team_agents) > 1,
         }
 
     @tool
