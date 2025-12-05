@@ -14,20 +14,17 @@ from ..utils.log import logger
 
 
 class FileManagerToolSetBase(ToolSet):
-    """Base class for file manager toolset.
-    This class is not a toolset itself, but a base class for other file manager toolsets.
-    It provides the basic file manager functionality, including:
-        - list files
-        - create directory
-        - delete directory
-        - delete file
-        - move file
-        - read file
+    """Base class for file manager toolsets.
+    Supplies fundamental workspace operations such as:
+        - `get_cwd` / `list_files`: inspect the current root and list directory contents.
+        - `create_directory`: create one or multiple directories (recursively when needed).
+        - `delete_path`: remove files or directories, optionally with recursive deletion.
+        - `move_file`: relocate files within the managed workspace.
 
     Args:
         name: The name of the toolset.
-        path: The path to the directory to manage.
-        black_list: The list of files to ignore.
+        path: The root directory to manage (defaults to cwd).
+        black_list: Names to hide from listing APIs.
         **kwargs: Additional keyword arguments.
     """
 
@@ -103,101 +100,45 @@ class FileManagerToolSetBase(ToolSet):
         return {"success": all_success, "results": results}
 
     @tool
-    async def create_file(self, file_path: str, content: str | None = "") -> dict:
-        """Create a new text file only if it does not exist.
+    async def delete_path(
+        self,
+        path: str | list[str],
+        recursive: bool = False,
+    ) -> dict:
+        """Delete files or directories with optional recursion.
 
         Args:
-            file_path: The path to the file to create.
-            content: Optional initial content for the file.
-
-        Returns:
-            dict: Success status or error if file already exists.
+            path: Single path or list of paths relative to the workspace root.
+            recursive: When True, directories are deleted recursively using rmtree.
         """
-        target_path = self.path / file_path
-        if target_path.exists():
-            return {"success": False, "error": "File already exists"}
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(target_path, "w", encoding="utf-8") as handle:
-                handle.write(content or "")
-            return {"success": True}
-        except Exception as exc:
-            logger.error(f"create_file failed for {file_path}: {exc}")
-            return {"success": False, "error": str(exc)}
-
-    @tool
-    async def delete_directory(self, sub_dir: str | list[str]) -> dict:
-        """Delete one or more directories and all their contents recursively.
-
-        Args:
-            sub_dir: Directory path or list of directory paths to delete.
-
-        Returns:
-            dict: Success status. For batch operations, includes results for each path.
-        """
-        if isinstance(sub_dir, str):
-            dir_path = self.path / sub_dir
-            if not dir_path.exists():
-                return {"success": False, "error": "Directory does not exist"}
-            if not dir_path.is_dir():
-                return {"success": False, "error": "Path is not a directory"}
-            shutil.rmtree(dir_path)
-            return {"success": True}
-
-        # Batch operation
-        results = []
-        for path in sub_dir:
-            dir_path = self.path / path
-            if not dir_path.exists():
-                results.append({"path": path, "success": False, "error": "Directory does not exist"})
-            elif not dir_path.is_dir():
-                results.append({"path": path, "success": False, "error": "Path is not a directory"})
-            else:
-                try:
-                    shutil.rmtree(dir_path)
-                    results.append({"path": path, "success": True})
-                except Exception as exc:
-                    results.append({"path": path, "success": False, "error": str(exc)})
-
-        all_success = all(r["success"] for r in results)
-        return {"success": all_success, "results": results}
-
-    @tool
-    async def delete_file(self, file_path: str | list[str]) -> dict:
-        """Delete one or more files.
-
-        Args:
-            file_path: File path or list of file paths to delete.
-
-        Returns:
-            dict: Success status. For batch operations, includes results for each path.
-        """
-        if isinstance(file_path, str):
-            path = self.path / file_path
-            if not path.exists():
-                return {"success": False, "error": "File does not exist"}
-            if path.is_dir():
-                path.rmdir()
-            else:
-                path.unlink()
-            return {"success": True}
-
-        # Batch operation
-        results = []
-        for fp in file_path:
-            path = self.path / fp
-            if not path.exists():
-                results.append({"path": fp, "success": False, "error": "File does not exist"})
-            else:
-                try:
-                    if path.is_dir():
-                        path.rmdir()
+        def _delete_single_path(relative_path: str) -> dict:
+            target_path = self.path / relative_path
+            if not target_path.exists():
+                return {
+                    "path": relative_path,
+                    "success": False,
+                    "error": "Path does not exist",
+                }
+            try:
+                if target_path.is_dir():
+                    if recursive:
+                        shutil.rmtree(target_path)
                     else:
-                        path.unlink()
-                    results.append({"path": fp, "success": True})
-                except Exception as exc:
-                    results.append({"path": fp, "success": False, "error": str(exc)})
+                        target_path.rmdir()
+                else:
+                    target_path.unlink()
+                return {"path": relative_path, "success": True}
+            except Exception as exc:
+                return {
+                    "path": relative_path,
+                    "success": False,
+                    "error": str(exc),
+                }
 
+        if isinstance(path, str):
+            return _delete_single_path(path)
+
+        results = [_delete_single_path(p) for p in path]
         all_success = all(r["success"] for r in results)
         return {"success": all_success, "results": results}
 
@@ -221,16 +162,12 @@ def path_to_image_url(path: str) -> str:
 
 
 class FileManagerToolSet(FileManagerToolSetBase):
-    """File manager toolset.
-    This class is a toolset that provides the basic file manager functionality, including:
-    - list files
-    - create directory
-    - delete directory
-    - delete file
-    - move file
-    - read file
-    - read pdf (Convert pdf to text)
-    - observe image
+    """Extended file manager toolset.
+    Builds on the base class with higher-level helpers:
+        - `read_file` / `write_file` / `update_file`: text read/write/structured replace operations.
+        - `observe_images` / `observe_pdf_screenshots`: LLM-assisted visual inspection.
+        - `read_pdf`: PDF-to-text extraction for downstream consumption.
+        - `fetch_image_base64`: encode images for frontend display pipelines.
 
     Args:
         name: The name of the toolset.
@@ -238,31 +175,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
         black_list: The list of files to ignore.
         **kwargs: Additional keyword arguments.
     """
-
-    @tool
-    async def list_file_tree(self, sub_dir: str | None = None) -> list[dict]:
-        """List all files in the directory recursively."""
-        if not self.path.exists():
-            return {"success": False, "error": "Directory does not exist"}
-
-        def _list_tree(path: Path) -> dict:
-            """Helper function to recursively build the tree structure."""
-            result = {
-                "name": path.name,
-                "type": "directory" if path.is_dir() else "file",
-                "size": path.stat().st_size if path.is_file() else 0,
-            }
-            if path.is_dir():
-                result["children"] = []
-                for item in sorted(path.iterdir()):
-                    result["children"].append(_list_tree(item))
-            return result
-
-        target_path = self.path / sub_dir if sub_dir else self.path
-        if not target_path.exists():
-            return {"success": False, "error": "Target directory does not exist"}
-
-        return _list_tree(target_path)
 
     @tool
     async def read_file(self, file_path: str, first_n_lines: int | None = None) -> dict:
@@ -289,23 +201,37 @@ class FileManagerToolSet(FileManagerToolSetBase):
             }
 
     @tool
-    async def write_file(self, file_path: str, content: str) -> dict:
-        """Write text to a file, overwriting if it exists.
+    async def write_file(
+        self,
+        file_path: str,
+        content: str = "",
+        overwrite: bool = True,
+    ) -> dict:
+        """Write text to a file with optional overwrite control.
 
         Args:
             file_path: The path to the file to write.
             content: The content to write to the file.
+            overwrite: When False, abort if the target file already exists.
 
         Returns:
             dict: Success status or error message.
         """
+
         target_path = self.path / file_path
+        if not overwrite and target_path.exists():
+            return {
+                "success": False,
+                "error": "File already exists",
+                "reason": "overwrite_disabled",
+            }
+
         try:
             if not target_path.parent.exists():
                 target_path.parent.mkdir(parents=True, exist_ok=True)
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            return {"success": True}
+            return {"success": True, "overwritten": overwrite}
         except Exception as exc:
             logger.error(f"write_file failed for {file_path}: {exc}")
             return {"success": False, "error": str(exc)}

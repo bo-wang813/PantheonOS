@@ -54,17 +54,18 @@ class FileTransferClient:
         return resp
 
     async def delete_directory(self, sub_dir: str):
-        """Delete a directory."""
-        service = await self.connect()
-        resp = await service.invoke("delete_directory", {"sub_dir": sub_dir})
-        if resp.get("error"):
-            raise Exception(resp["error"])
-        return resp
+        """Delete a directory (wrapper around delete_path)."""
+        return await self.delete_path(sub_dir, recursive=True)
 
     async def delete_file(self, file_path: str):
-        """Delete a file."""
+        """Delete a file (wrapper around delete_path)."""
+        return await self.delete_path(file_path, recursive=False)
+
+    async def delete_path(self, path: str | list[str], recursive: bool = False):
+        """Delete files or directories using the unified delete_path tool."""
         service = await self.connect()
-        resp = await service.invoke("delete_file", {"file_path": file_path})
+        payload = {"path": path, "recursive": recursive}
+        resp = await service.invoke("delete_path", payload)
         if resp.get("error"):
             raise Exception(resp["error"])
         return resp

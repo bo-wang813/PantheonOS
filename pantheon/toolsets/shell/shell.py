@@ -58,8 +58,7 @@ class ShellToolSet(ToolSet):
     @tool
     async def new_shell(self) -> dict:
         """Create a new shell and return its id.
-        You can use `run_command_in_shell` to run command in the shell,
-        by providing the shell id."""
+        Use `run_command_in_shell` with the returned `shell_id` to run commands."""
         shell = AsyncShell()
         shell.env = self._prepare_shell_env()
         initial_output = await shell.start()
@@ -70,63 +69,89 @@ class ShellToolSet(ToolSet):
         logger.info(f"[dim]New shell created: {shell_id[:8]}[/dim]")
 
         return {
+            "success": True,
             "shell_id": shell_id,
             "initial_output": initial_output,
         }
 
     @tool
-    async def close_shell(self, shell_id: str):
+    async def close_shell(self, shell_id: str) -> dict:
         """Close a shell.
 
         Args:
             shell_id: The id of the shell to close.
         """
-        shell = self.shells[shell_id]
+        shell = self.shells.get(shell_id)
+        if shell is None:
+            return {"success": False, "error": "Shell not found", "shell_id": shell_id}
+
         await shell.close()
         del self.shells[shell_id]
 
         # Show shell closure status
         logger.info(f"[dim]Shell closed: {shell_id[:8]}[/dim]")
+        return {"success": True, "shell_id": shell_id}
 
     @tool
     async def run_command_in_shell(
-        self, command: str, shell_id: str, timeout: int | None = None
-    ):
-        """Run a command in a shell.
+        self,
+        shell_id: str,
+        command: str | None = None,
+        timeout: int | None = None,
+    ) -> dict:
+        """Execute a command or fetch pending output from an existing shell.
 
         Args:
-            command: The command to run.
-            shell_id: The id of the shell to run the command in.
-            timeout: The timeout for the command to run. Use None for no timeout (long-running commands).
+            shell_id: Identifier for the shell session (from `new_shell` or managed automatically by `run_command`).
+            command: Command string to run. If omitted, the tool drains buffered output from the shell (e.g., after a timeout).
+            timeout: Optional timeout in seconds. On timeout, the command keeps running and you can re-call this tool with
+                only the shell_id to fetch remaining output.
 
         Returns:
-            The output of the command.
+            dict: Structured result including success flag, `status` ("completed" or "timeout"), and the raw output text.
         """
-        shell = self.shells[shell_id]
-        output, finished = await shell.run_command(command, timeout=timeout)
-        if timeout is not None and not finished:
-            timeout_msg = f"Command timed out after {timeout}s - you can try get_shell_output for remaining output"
-            logger.info(f"[yellow]⚠️ {timeout_msg}[/yellow]")
-            output += f"\n[Warning] The execution of the command was interrupted because of the timeout. "
-            output += "You can try to run get_shell_output to get the remaining output of the shell."
-        return output
 
-    @tool
-    async def get_shell_output(self, shell_id: str, timeout: int | None = None) -> str:
-        """Get the output of a shell. Don't use this function unless you need to get the remaining output of an interrupted command.
+        shell = self.shells.get(shell_id)
+        if shell is None:
+            return {"success": False, "error": "Shell not found", "shell_id": shell_id}
 
-        Args:
-            shell_id: The id of the shell to get the output from.
-            timeout: The timeout for the output to be returned. Use None for no timeout.
-        """
-        shell = self.shells[shell_id]
-        output, finished = await shell.read_until_marker(timeout=timeout)
-        if timeout is not None and not finished:
-            timeout_msg = f"Reading shell output timed out after {timeout}s"
-            logger.info(f"[yellow]⚠️ {timeout_msg}[/yellow]")
-            output += "\n[Warning] The execution of the command was interrupted because of the timeout. "
-            output += "You can try to run get_shell_output to get the remaining output of the shell."
-        return output
+        status = "completed"
+
+        try:
+            def _handle_timeout(message: str) -> None:
+                nonlocal status, output
+                status = "timeout"
+                logger.info(f"[yellow]⚠️ {message}[/yellow]")
+                output += "\n[Warning] The execution of the command was interrupted because of the timeout. "
+                output += (
+                    "You can try to run run_command_in_shell without a command to get the remaining output of the shell."
+                )
+
+            if command is not None:
+                await self._apply_context_to_shell(shell)
+                output, finished = await shell.run_command(command, timeout=timeout)
+                if timeout is not None and not finished:
+                    _handle_timeout(
+                        f"Command timed out after {timeout}s - call run_command_in_shell without a command to fetch remaining output"
+                    )
+            else:
+                output, finished = await shell.read_until_marker(timeout=timeout)
+                if timeout is not None and not finished:
+                    _handle_timeout(
+                        f"Reading shell output timed out after {timeout}s"
+                    )
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "shell_id": shell_id}
+
+        response = {
+            "success": True,
+            "shell_id": shell_id,
+            "status": status,
+            "output": output,
+        }
+        if command is not None:
+            response["command"] = command
+        return response
 
     def _is_shell_alive(self, shell_id: str) -> bool:
         """Check if a shell is still alive and responsive."""
@@ -172,11 +197,11 @@ class ShellToolSet(ToolSet):
         command: str,
         timeout: int | None = None,
     ):
-        """Run shell command and get the output.
+        """Run shell command and return a structured result.
 
         Args:
             command: The command to run.
-            timeout: The timeout for the command to run. Use None for no timeout (long-running commands).
+            timeout: Optional timeout. Use None for long-running commands.
         """
         context_dict = dict(self.get_context() or {})
         client_id = context_dict.get("client_id")
@@ -199,46 +224,39 @@ class ShellToolSet(ToolSet):
             shell_id = await self._restart_shell(client_id)
             initial_output = ""  # New shell will have its own initial output
 
-        shell = self.shells[shell_id]
-        await self._apply_context_to_shell(shell)
+        result = await self.run_command_in_shell(
+            shell_id=shell_id,
+            command=command,
+            timeout=timeout,
+        )
 
-        # Try to run command with automatic recovery on failure
-        try:
-            output = await self.run_command_in_shell(command, shell_id, timeout=timeout)
-        except Exception as e:
-            # Handle shell crashes and other failures
-            error_msg = str(e).lower()
-            if (
-                "broken" in error_msg
-                or "closed" in error_msg
-                or "process" in error_msg
-                or "pipe" in error_msg
-                or shell_id not in self.shells
-                or not self._is_shell_alive(shell_id)
-            ):
-                # Shell crashed, restart and retry
-                logger.warning(f"Shell command failed: {e}")
-                shell_id = await self._restart_shell(client_id)
-                shell = self.shells[shell_id]
-                await self._apply_context_to_shell(shell)
+        # If the shell crashed, restart it but do not rerun the command automatically
+        if not result.get("success") and self._should_restart(result.get("error")):
+            logger.warning(
+                f"Shell command failed for shell {shell_id[:8]}: {result.get('error')}"
+            )
+            shell_id = await self._restart_shell(client_id)
+            return result
 
-                try:
-                    output = await self.run_command_in_shell(
-                        command, shell_id, timeout=timeout
-                    )
-                    logger.info("Command execution successful after shell restart")
-                except Exception as retry_error:
-                    logger.error(
-                        f"Command execution failed even after shell restart: {retry_error}"
-                    )
-                    raise retry_error
-            else:
-                # Re-raise non-shell-related exceptions
-                raise e
+        if not result.get("success"):
+            return result
 
-        if initial_output:
-            output = initial_output + "\n" + output
-        return output
+        if initial_output and result.get("success"):
+            combined_output = result.get("output") or ""
+            result["output"] = (
+                f"{initial_output}\n{combined_output}" if combined_output else initial_output
+            )
+
+        return result
+
+    def _should_restart(self, error_message: str | None) -> bool:
+        if not error_message:
+            return False
+        error_msg = error_message.lower()
+        return any(
+            keyword in error_msg
+            for keyword in ["broken", "closed", "process", "pipe", "not found"]
+        )
 
     async def run_setup(self):
         """Setup the toolset before running it."""

@@ -37,31 +37,31 @@ async def test_file_manager():
             await service.invoke("write_file", {"file_path": "test.txt", "content": "Hello, world!1"})
             await service.invoke("write_file", {"file_path": "test1/test.txt", "content": "Hello, world!2"})
             await service.invoke("write_file", {"file_path": "test2/test.txt", "content": "Hello, world!3"})
-            resp = await service.invoke("list_file_tree")
-            assert len(resp['children']) == 3
+            resp = await service.invoke("list_files")
+            assert len(resp['files']) == 3
             resp = await service.invoke("read_file", {"file_path": "test.txt"})
             assert resp["content"] == "Hello, world!1"
             resp = await service.invoke("read_file", {"file_path": "test1/test.txt"})
             assert resp["content"] == "Hello, world!2"
             resp = await service.invoke("read_file", {"file_path": "test2/test.txt"})
             assert resp["content"] == "Hello, world!3"
-            resp = await service.invoke("delete_file", {"file_path": "test.txt"})
+            resp = await service.invoke("delete_path", {"path": "test.txt"})
             assert resp["success"]
-            resp = await service.invoke("list_file_tree")
-            assert len(resp['children']) == 2
-            resp = await service.invoke("delete_directory", {"sub_dir": "test1"})
+            resp = await service.invoke("list_files")
+            assert len(resp['files']) == 2
+            resp = await service.invoke("delete_path", {"path": "test1", "recursive": True})
             assert resp["success"]
-            resp = await service.invoke("list_file_tree")
-            assert len(resp['children']) == 1
-            resp = await service.invoke("delete_directory", {"sub_dir": "test2"})
+            resp = await service.invoke("list_files")
+            assert len(resp['files']) == 1
+            resp = await service.invoke("delete_path", {"path": "test2", "recursive": True})
             assert resp["success"]
-            resp = await service.invoke("list_file_tree")
-            assert len(resp['children']) == 0
+            resp = await service.invoke("list_files")
+            assert len(resp['files']) == 0
 
             # error cases
-            resp = await service.invoke("delete_directory", {"sub_dir": "test1"})
+            resp = await service.invoke("delete_path", {"path": "test1", "recursive": True})
             assert not resp["success"]
-            resp = await service.invoke("delete_directory", {"sub_dir": "test1/test.txt"})
+            resp = await service.invoke("delete_path", {"path": "test1/test.txt", "recursive": True})
             assert not resp["success"]
-            resp = await service.invoke("delete_file", {"file_path": "../test.txt"})
+            resp = await service.invoke("delete_path", {"path": "../test.txt"})
             assert not resp["success"]

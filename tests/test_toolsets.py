@@ -183,6 +183,8 @@ async def test_shell_toolset():
             command = "dir"
         else:
             command = "ls"
-        await s.invoke("run_command", {"command": command})
+        resp = await s.invoke("run_command", {"command": command})
+        assert resp["success"]
         resp = await s.invoke("run_command", {"command": "echo 'Hello, world!'"})
-        assert "Hello, world!" in resp
+        assert resp["success"]
+        assert "Hello, world!" in resp["output"]

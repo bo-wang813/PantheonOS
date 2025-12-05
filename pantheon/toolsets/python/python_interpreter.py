@@ -92,9 +92,7 @@ class PythonInterpreterToolSet(ToolSet):
         self._engine = engine
         self.engine = None
         self.clientid_to_interpreterid = {}
-        self.workdir = (
-            Path(workdir).expanduser().resolve() if workdir else Path.cwd()
-        )
+        self.workdir = Path(workdir).expanduser().resolve() if workdir else Path.cwd()
         self.init_code = init_code
         self._bootstrapped: set[str] = set()
 
@@ -145,7 +143,8 @@ class PythonInterpreterToolSet(ToolSet):
             logger.warning("No client id provided, using default client id.")
         p_id = self.clientid_to_interpreterid.get(client_id)
         if (p_id is None) or (p_id not in self.interpreters):
-            p_id = await self.new_interpreter()
+            create_resp = await self.new_interpreter()
+            p_id = create_resp["interpreter_id"]
             self.clientid_to_interpreterid[client_id] = p_id
 
         await self._inject_runtime_context(p_id)
@@ -200,7 +199,8 @@ class PythonInterpreterToolSet(ToolSet):
                             pass  # Ignore cleanup errors
 
                 # Create new interpreter and retry
-                p_id = await self.new_interpreter()
+                create_resp = await self.new_interpreter()
+                p_id = create_resp["interpreter_id"]
                 self.clientid_to_interpreterid[client_id] = p_id
                 logger.info(f"Python interpreter restarted (client_id: {client_id})")
 
@@ -218,6 +218,7 @@ class PythonInterpreterToolSet(ToolSet):
                     )
                     # Return a more user-friendly error message
                     return {
+                        "success": False,
                         "result": None,
                         "stdout": "",
                         "stderr": f"Python interpreter crashed and restart failed.\nOriginal error: {error_type}\nRetry error: {str(retry_error)[:200]}...\n\nTry using /restart command to fully reset the Python environment.",
@@ -227,6 +228,7 @@ class PythonInterpreterToolSet(ToolSet):
                 # Re-raise non-process-related exceptions
                 raise e
 
+        res.setdefault("success", True)
         return res
 
     async def __run_code_in_interpreter(
@@ -266,6 +268,8 @@ class PythonInterpreterToolSet(ToolSet):
         Returns:
             A dictionary with the result, stdout, and stderr.
         """
+        await self._inject_runtime_context(interpreter_id)
+
         code = "GLOBAL_FIG_PATH = None\n" + code
         res = await self.__run_code_in_interpreter(
             code, interpreter_id, result_var_name
@@ -285,10 +289,11 @@ class PythonInterpreterToolSet(ToolSet):
             res["base64_uri"] = [base64_uri]
             res["hidden_to_model"] = ["base64_uri"]
 
+        res["success"] = True
         return res
 
     @tool
-    async def new_interpreter(self) -> str:
+    async def new_interpreter(self) -> dict:
         """Create a new Python interpreter and return its id.
         You can use `run_code_in_interpreter` to run code in the interpreter,
         by providing the interpreter id."""
@@ -329,34 +334,39 @@ class PythonInterpreterToolSet(ToolSet):
             )
         if self.init_code is not None:
             await self.run_code_in_interpreter(self.init_code, job.id)
-        return job.id
+        return {"success": True, "interpreter_id": job.id}
 
     @tool
-    async def delete_interpreter(self, interpreter_id: str):
+    async def delete_interpreter(self, interpreter_id: str) -> dict:
         """Delete an interpreter.
 
         Args:
             interpreter_id: The id of the interpreter to delete.
         """
         if interpreter_id not in self.interpreters:
-            raise ValueError(f"Interpreter {interpreter_id} not found")
+            return {
+                "success": False,
+                "error": f"Interpreter {interpreter_id} not found",
+            }
         job = self.jobs[interpreter_id]
         await job.cancel()
         del self.interpreters[interpreter_id]
         del self.jobs[interpreter_id]
         self.engine.jobs.remove(job)
         self._bootstrapped.discard(interpreter_id)
+        return {"success": True, "interpreter_id": interpreter_id}
 
     @tool
-    async def list_interpreters(self) -> list[dict]:
+    async def list_interpreters(self) -> dict:
         """List all interpreters."""
-        return [
+        interpreters = [
             {
                 "id": interpreter_id,
                 "status": job.status,
             }
             for interpreter_id, job in self.jobs.items()
         ]
+        return {"success": True, "interpreters": interpreters}
 
     async def run_setup(self):
         """Setup the toolset before running it."""
