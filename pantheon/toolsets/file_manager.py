@@ -75,11 +75,32 @@ class FileManagerToolSetBase(ToolSet):
         }
 
     @tool
-    async def create_directory(self, sub_dir: str):
-        """Create a new directory."""
-        new_dir = self.path / sub_dir
-        new_dir.mkdir(parents=True, exist_ok=True)
-        return {"success": True}
+    async def create_directory(self, sub_dir: str | list[str]) -> dict:
+        """Create one or more directories.
+
+        Args:
+            sub_dir: Directory path or list of directory paths to create.
+
+        Returns:
+            dict: Success status. For batch operations, includes results for each path.
+        """
+        if isinstance(sub_dir, str):
+            new_dir = self.path / sub_dir
+            new_dir.mkdir(parents=True, exist_ok=True)
+            return {"success": True}
+
+        # Batch operation
+        results = []
+        for path in sub_dir:
+            try:
+                new_dir = self.path / path
+                new_dir.mkdir(parents=True, exist_ok=True)
+                results.append({"path": path, "success": True})
+            except Exception as exc:
+                results.append({"path": path, "success": False, "error": str(exc)})
+
+        all_success = all(r["success"] for r in results)
+        return {"success": all_success, "results": results}
 
     @tool
     async def create_file(self, file_path: str, content: str | None = "") -> dict:
@@ -105,27 +126,80 @@ class FileManagerToolSetBase(ToolSet):
             return {"success": False, "error": str(exc)}
 
     @tool
-    async def delete_directory(self, sub_dir: str):
-        """Delete a directory and all its contents recursively."""
-        dir_path = self.path / sub_dir
-        if not dir_path.exists():
-            return {"success": False, "error": "Directory does not exist"}
-        if not dir_path.is_dir():
-            return {"success": False, "error": "Path is not a directory"}
-        shutil.rmtree(dir_path)
-        return {"success": True}
+    async def delete_directory(self, sub_dir: str | list[str]) -> dict:
+        """Delete one or more directories and all their contents recursively.
+
+        Args:
+            sub_dir: Directory path or list of directory paths to delete.
+
+        Returns:
+            dict: Success status. For batch operations, includes results for each path.
+        """
+        if isinstance(sub_dir, str):
+            dir_path = self.path / sub_dir
+            if not dir_path.exists():
+                return {"success": False, "error": "Directory does not exist"}
+            if not dir_path.is_dir():
+                return {"success": False, "error": "Path is not a directory"}
+            shutil.rmtree(dir_path)
+            return {"success": True}
+
+        # Batch operation
+        results = []
+        for path in sub_dir:
+            dir_path = self.path / path
+            if not dir_path.exists():
+                results.append({"path": path, "success": False, "error": "Directory does not exist"})
+            elif not dir_path.is_dir():
+                results.append({"path": path, "success": False, "error": "Path is not a directory"})
+            else:
+                try:
+                    shutil.rmtree(dir_path)
+                    results.append({"path": path, "success": True})
+                except Exception as exc:
+                    results.append({"path": path, "success": False, "error": str(exc)})
+
+        all_success = all(r["success"] for r in results)
+        return {"success": all_success, "results": results}
 
     @tool
-    async def delete_file(self, file_path: str):
-        """Delete a file."""
-        path = self.path / file_path
-        if not path.exists():
-            return {"success": False, "error": "File does not exist"}
-        if path.is_dir():
-            path.rmdir()
-        else:
-            path.unlink()
-        return {"success": True}
+    async def delete_file(self, file_path: str | list[str]) -> dict:
+        """Delete one or more files.
+
+        Args:
+            file_path: File path or list of file paths to delete.
+
+        Returns:
+            dict: Success status. For batch operations, includes results for each path.
+        """
+        if isinstance(file_path, str):
+            path = self.path / file_path
+            if not path.exists():
+                return {"success": False, "error": "File does not exist"}
+            if path.is_dir():
+                path.rmdir()
+            else:
+                path.unlink()
+            return {"success": True}
+
+        # Batch operation
+        results = []
+        for fp in file_path:
+            path = self.path / fp
+            if not path.exists():
+                results.append({"path": fp, "success": False, "error": "File does not exist"})
+            else:
+                try:
+                    if path.is_dir():
+                        path.rmdir()
+                    else:
+                        path.unlink()
+                    results.append({"path": fp, "success": True})
+                except Exception as exc:
+                    results.append({"path": fp, "success": False, "error": str(exc)})
+
+        all_success = all(r["success"] for r in results)
+        return {"success": all_success, "results": results}
 
     @tool
     async def move_file(self, old_path: str, new_path: str):
