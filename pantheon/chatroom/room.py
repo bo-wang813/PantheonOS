@@ -809,27 +809,37 @@ class ChatRoom(ToolSet):
         await self.attach_hooks(
             chat_id, process_chunk, process_step_message, wait=False
         )
-        await thread.run()
 
-        # Generate or update chat name after conversation
         try:
-            from .special_agents import get_chat_name_generator
+            await thread.run()
 
-            chat_name_generator = get_chat_name_generator()
-            memory.name = await chat_name_generator.generate_or_update_name(memory)
-        except Exception as e:
-            logger.error(f"Failed to generate/update chat name: {e}")
+            # Generate or update chat name after conversation
+            try:
+                from .special_agents import get_chat_name_generator
 
-        # Publish chat finished message if NATS streaming enabled
-        if self._nats_adapter is not None:
-            await self._nats_adapter.publish_chat_finished(chat_id)
+                chat_name_generator = get_chat_name_generator()
+                memory.name = await chat_name_generator.generate_or_update_name(memory)
+            except Exception as e:
+                logger.error(f"Failed to generate/update chat name: {e}")
 
-        memory.extra_data["running"] = False
-        memory.extra_data["last_activity_date"] = datetime.now().isoformat()
-        await run_func(self.memory_manager.save)
-        del self.threads[chat_id]
+            # Publish chat finished message if NATS streaming enabled
+            if self._nats_adapter is not None:
+                await self._nats_adapter.publish_chat_finished(chat_id)
 
-        return thread.response
+            return thread.response
+        except asyncio.CancelledError:
+            logger.info(f"Chat {chat_id} was cancelled/interrupted")
+            raise  # Re-raise to propagate cancellation
+        finally:
+            # Always clean up the thread from the registry, whether successful or interrupted
+            memory.extra_data["running"] = False
+            memory.extra_data["last_activity_date"] = datetime.now().isoformat()
+            try:
+                await run_func(self.memory_manager.save)
+            except Exception as e:
+                logger.error(f"Failed to save memory on cleanup: {e}")
+            if chat_id in self.threads:
+                del self.threads[chat_id]
 
     @tool
     async def stop_chat(self, chat_id: str):
@@ -842,6 +852,10 @@ class ChatRoom(ToolSet):
         if thread is None:
             return {"success": False, "message": "Chat doesn't have a thread"}
         await thread.stop()
+        # Note: Thread cleanup from self.threads happens in chat()'s finally block
+        # But if called externally, we ensure cleanup here as well
+        if chat_id in self.threads:
+            del self.threads[chat_id]
         return {"success": True, "message": "Chat stopped successfully"}
 
     @tool
