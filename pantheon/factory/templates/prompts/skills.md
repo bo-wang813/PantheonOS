@@ -8,7 +8,7 @@ params:
     default: "../skills"
 ---
 
-## Pantheon Skills
+## Agent Skills
 
 - Root directory: `{root_dir}`
 - Skills are curated best-practice playbooks (Markdown + optional scripts/data) that capture domain workflows, code snippets, and troubleshooting notes.
