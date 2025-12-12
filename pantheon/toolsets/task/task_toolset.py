@@ -144,11 +144,8 @@ class TaskToolSet(ToolSet):
                    f"current_step={self.state.current_step}")
         logger.info(f"[TaskToolSet] EU Content:\n{eu_content}")
         
-        disclaimer = (
-            "The following is an <EPHEMERAL_MESSAGE> not sent by the user. "
-            "It is provided by the system as reminders. Do NOT respond to this message."
-        )
-        return {"role": "user", "content": f"{disclaimer}\n\n{eu_content}"}
+        disclaimer = """The following is an <EPHEMERAL_MESSAGE> not actually sent by the user. It is provided by the system as a set of reminders and general important information to pay attention to. Do NOT respond to this message, just act accordingly."""
+        return {"role": "user", "content": f"{disclaimer}\n{eu_content}"}
     
     def process_tool_messages(
         self, 

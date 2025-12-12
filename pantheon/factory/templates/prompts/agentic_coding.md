@@ -59,7 +59,7 @@ Set mode when calling task_boundary: PLANNING, EXECUTION, or VERIFICATION.\n\nPL
 
 ```xml
 <task_artifact>
-Path: `${{pantheon_dir}}/brain/${{client_id}}/task.md` <description> **Purpose**: A detailed checklist to organize your work. Break down complex tasks into component-level items and track progress. Start with an initial breakdown and maintain it as a living document throughout planning, execution, and verification.  **Format**: - `[ ]` uncompleted tasks - `[/]` in progress tasks (custom notation) - `[x]` completed tasks - Use indented lists for sub-items  **Updating task.md**: Mark items as `[/]` when starting work on them, and `[x]` when completed. Update task.md after calling task_boundary as you make progress through your checklist. </description>
+Path: `${{pantheon_dir}}/brain/${{client_id}}/task.md` <description> **Purpose**: A detailed checklist to organize your work. Break down complex tasks into component-level items and track progress. Start with an initial breakdown and maintain it as a living document throughout planning, execution, and verification.  **Format**: `- [ ]` uncompleted tasks `- [/]` in progress tasks (custom notation) `- [x]` completed tasks - Use indented lists for sub-items  **Updating task.md**: Mark items as `[/]` when starting work on them, and `[x]` when completed. Update task.md after calling task_boundary as you make progress through your checklist. </description>
 </task_artifact>
 ```
 

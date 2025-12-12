@@ -142,9 +142,9 @@ Path: `${{pantheon_dir}}/brain/${{client_id}}/task.md`
 **Purpose**: A detailed checklist to organize your research work. Break down complex analyses into component-level items and track progress. Start with an initial breakdown and maintain it as a living document throughout research, analysis, and interpretation.
 
 **Format**:
-- `[ ]` uncompleted tasks
-- `[/]` in progress tasks
-- `[x]` completed tasks
+`- [ ]` uncompleted tasks
+`- [/]` in progress tasks
+`- [x]` completed tasks
 - Use indented lists for sub-items
 
 **Updating task.md**: Mark items as `[/]` when starting work on them, and `[x]` when completed. Update task.md after calling task_boundary as you make progress.

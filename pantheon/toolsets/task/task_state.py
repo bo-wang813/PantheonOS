@@ -148,7 +148,7 @@ class ConversationState:
     
     # Task tracking
     active_task: Optional[TaskInfo] = None
-    task_boundary_reason: str = "a task boundary has never been set yet"
+    task_boundary_reason: str = "a task boundary has never been set yet in this conversation"
     
     # Counter tracking
     tools_since_boundary: int = 0
