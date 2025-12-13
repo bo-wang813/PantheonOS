@@ -1,17 +1,18 @@
 import os
+import re
 from pathlib import Path
 import tempfile
 import shutil
 import base64
 import io
-import itertools
 from datetime import datetime
 
 from PIL import Image
 
-
-from ..toolset import ToolSet, tool
-from ..utils.log import logger
+from ...toolset import ToolSet, tool
+from ...utils.log import logger
+from .apply_patch import execute_patch_operations
+from .grep_glob import grep_search, glob_search
 
 
 def _replace_in_content(
@@ -23,7 +24,7 @@ def _replace_in_content(
     end_line: int | None = None,
 ) -> tuple[str | None, int, str | None]:
     """Perform string replacement in content with optional line range.
-    
+
     Args:
         content: The full file content.
         old_string: The exact string to find.
@@ -31,12 +32,13 @@ def _replace_in_content(
         replace_all: If True, replace all occurrences.
         start_line: Optional start line (1-indexed, inclusive).
         end_line: Optional end line (1-indexed, inclusive).
-    
+
     Returns:
         Tuple of (new_content, replacement_count, error_message).
         On success: (new_content, count, None)
         On failure: (None, 0, error_message)
     """
+
     def do_replace(text: str, old: str, new: str, count: int) -> tuple[str, int]:
         """Perform replacement, returns (new_text, actual_count)."""
         if count == 0:  # replace all
@@ -44,33 +46,45 @@ def _replace_in_content(
             return text.replace(old, new), n
         else:
             return text.replace(old, new, count), min(count, text.count(old))
-    
+
     # Handle line range restriction
     if start_line is not None or end_line is not None:
         lines = content.splitlines(keepends=True)
         start_idx = (start_line - 1) if start_line else 0
         end_idx = end_line if end_line else len(lines)
-        
+
         # Validate bounds
         if start_idx < 0 or start_idx >= len(lines):
-            return None, 0, f"start_line {start_line} is out of range (file has {len(lines)} lines)"
+            return (
+                None,
+                0,
+                f"start_line {start_line} is out of range (file has {len(lines)} lines)",
+            )
         if end_idx > len(lines):
-            return None, 0, f"end_line {end_line} is out of range (file has {len(lines)} lines)"
+            return (
+                None,
+                0,
+                f"end_line {end_line} is out of range (file has {len(lines)} lines)",
+            )
         if start_idx >= end_idx:
             return None, 0, "start_line must be less than end_line"
-        
+
         before = "".join(lines[:start_idx])
         section = "".join(lines[start_idx:end_idx])
         after = "".join(lines[end_idx:])
-        
+
         match_count = section.count(old_string)
-        
+
         if match_count == 0:
             return None, 0, f"old_string not found in lines {start_line}-{end_line}"
-        
+
         if match_count > 1 and not replace_all:
-            return None, 0, f"old_string found {match_count} times in lines {start_line}-{end_line}. Set replace_all=True or narrow the line range."
-        
+            return (
+                None,
+                0,
+                f"old_string found {match_count} times in lines {start_line}-{end_line}. Set replace_all=True or narrow the line range.",
+            )
+
         new_section, replaced = do_replace(
             section, old_string, new_string, 0 if replace_all else 1
         )
@@ -78,13 +92,17 @@ def _replace_in_content(
     else:
         # Full content replacement
         match_count = content.count(old_string)
-        
+
         if match_count == 0:
             return None, 0, "old_string not found in file"
-        
+
         if match_count > 1 and not replace_all:
-            return None, 0, f"old_string found {match_count} times. Set replace_all=True or use start_line/end_line to target specific occurrence."
-        
+            return (
+                None,
+                0,
+                f"old_string found {match_count} times. Set replace_all=True or use start_line/end_line to target specific occurrence.",
+            )
+
         new_content, replaced = do_replace(
             content, old_string, new_string, 0 if replace_all else 1
         )
@@ -93,18 +111,86 @@ def _replace_in_content(
 
 class FileManagerToolSetBase(ToolSet):
     """Base class for file manager toolsets.
-    Supplies fundamental workspace operations such as:
-        - `get_cwd` / `list_files`: inspect the current root and list directory contents.
-        - `create_directory`: create one or multiple directories (recursively when needed).
-        - `delete_path`: remove files or directories, optionally with recursive deletion.
-        - `move_file`: relocate files within the managed workspace.
 
-    Args:
-        name: The name of the toolset.
-        path: The root directory to manage (defaults to cwd).
-        black_list: Names to hide from listing APIs.
-        **kwargs: Additional keyword arguments.
+    Provides unified path management and file operations.
     """
+
+    @tool
+    async def manage_path(
+        self,
+        operation: str,
+        path: str,
+        new_path: str | None = None,
+        recursive: bool = False,
+    ) -> dict:
+        """Unified tool for managing files and directories.
+
+        This tool consolidates common file system operations into a single interface.
+        Use this instead of create_directory, delete_path, or move_file.
+
+        Args:
+            operation: The operation to perform. One of:
+                      - "create_dir": Create a directory (and parents if needed)
+                      - "delete": Delete a file or directory
+                      - "move": Move or rename a file/directory
+
+            path: The target path for the operation (relative to workspace root).
+                  For "create_dir" and "delete", this is the path to create/delete.
+                  For "move", this is the source path.
+
+            new_path: Required for "move" operation. The destination path.
+                     Ignored for other operations.
+
+            recursive: For "delete" operation only. When True, directories are
+                      deleted recursively. When False, only empty directories
+                      can be deleted. Default: False.
+
+        Returns:
+            dict: {"success": bool, ...} with operation-specific details.
+                 On error: {"success": False, "error": str}
+
+        Examples:
+            # Create a directory (parents created automatically)
+            await manage_path("create_dir", "src/components")
+
+            # Delete a file
+            await manage_path("delete", "old_file.py")
+
+            # Delete a directory recursively
+            await manage_path("delete", "old_folder", recursive=True)
+
+            # Move/rename a file
+            await manage_path("move", "old_name.py", new_path="new_name.py")
+
+            # Move to different directory
+            await manage_path("move", "file.py", new_path="backup/file.py")
+        """
+        # Validate operation
+        valid_operations = ["create_dir", "delete", "move"]
+        if operation not in valid_operations:
+            return {
+                "success": False,
+                "error": f"Invalid operation '{operation}'. Must be one of: {', '.join(valid_operations)}",
+            }
+
+        try:
+            if operation == "create_dir":
+                return await self.create_directory(path)
+
+            elif operation == "delete":
+                return await self.delete_path(path, recursive=recursive)
+
+            elif operation == "move":
+                if new_path is None:
+                    return {
+                        "success": False,
+                        "error": "new_path is required for 'move' operation",
+                    }
+                return await self.move_file(path, new_path)
+
+        except Exception as e:
+            logger.error(f"manage_path failed for operation {operation}: {e}")
+            return {"success": False, "error": str(e)}
 
     def __init__(
         self,
@@ -124,18 +210,23 @@ class FileManagerToolSetBase(ToolSet):
         """Get current working directory."""
         return {"success": True, "cwd": str(self.path)}
 
-    @tool
+    @tool(exclude=True)
     async def list_files(
         self,
         sub_dir: str | None = None,
         recursive: bool = False,
         max_depth: int = 5,
     ) -> dict:
-        """List files and directories in the workspace.
+        """DEPRECATED: Use glob() or grep() instead.
 
-        Use this tool to browse directory contents. For searching, use shell:
-        - Find files by name: `fd` or `find`
-        - Find text in files: `rg` or `grep`
+        This tool returns too much data and is inefficient.
+
+        Recommended alternatives:
+        - Use glob() to find files by pattern (e.g., glob("**/*.py"))
+        - Use grep() to search file contents (e.g., grep("TODO", file_pattern="**/*.py"))
+
+        Original functionality:
+        List files and directories in the workspace.
 
         Args:
             sub_dir: Subdirectory to list (relative to workspace root).
@@ -177,6 +268,7 @@ class FileManagerToolSetBase(ToolSet):
                 ],
             }
         else:
+
             def _list_tree(path: Path, current_depth: int = 0) -> dict:
                 """Helper function to recursively build the tree structure."""
                 result = {
@@ -191,7 +283,9 @@ class FileManagerToolSetBase(ToolSet):
                     else:
                         result["children"] = []
                         for item in sorted(path.iterdir()):
-                            result["children"].append(_list_tree(item, current_depth + 1))
+                            result["children"].append(
+                                _list_tree(item, current_depth + 1)
+                            )
                 return result
 
             if not target_path.exists():
@@ -199,8 +293,7 @@ class FileManagerToolSetBase(ToolSet):
 
             return {"success": True, "tree": _list_tree(target_path, 0)}
 
-
-    @tool
+    @tool(exclude=True)
     async def create_directory(self, sub_dir: str | list[str]) -> dict:
         """Create one or more directories.
 
@@ -228,7 +321,7 @@ class FileManagerToolSetBase(ToolSet):
         all_success = all(r["success"] for r in results)
         return {"success": all_success, "results": results}
 
-    @tool
+    @tool(exclude=True)
     async def delete_path(
         self,
         path: str | list[str],
@@ -240,6 +333,7 @@ class FileManagerToolSetBase(ToolSet):
             path: Single path or list of paths relative to the workspace root.
             recursive: When True, directories are deleted recursively using rmtree.
         """
+
         def _delete_single_path(relative_path: str) -> dict:
             target_path = self.path / relative_path
             if not target_path.exists():
@@ -271,7 +365,7 @@ class FileManagerToolSetBase(ToolSet):
         all_success = all(r["success"] for r in results)
         return {"success": all_success, "results": results}
 
-    @tool
+    @tool(exclude=True)
     async def move_file(self, old_path: str, new_path: str):
         """Move or rename a file.
 
@@ -345,33 +439,39 @@ class FileManagerToolSet(FileManagerToolSetBase):
             return {"success": False, "error": "File does not exist"}
         if not target_path.is_file():
             return {"success": False, "error": "Path is not a file"}
-        
+
         try:
             with open(target_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-            
+
             total_lines = len(lines)
-            
+
             # Handle line range
             if start_line is not None or end_line is not None:
                 # Convert to 0-indexed
                 start_idx = (start_line - 1) if start_line else 0
                 end_idx = end_line if end_line else total_lines
-                
+
                 # Validate bounds
                 if start_idx < 0:
                     return {"success": False, "error": "start_line must be >= 1"}
                 if start_idx >= total_lines:
-                    return {"success": False, "error": f"start_line {start_line} is out of range (file has {total_lines} lines)"}
+                    return {
+                        "success": False,
+                        "error": f"start_line {start_line} is out of range (file has {total_lines} lines)",
+                    }
                 if end_idx > total_lines:
                     end_idx = total_lines  # Clamp to file end
                 if start_idx >= end_idx:
-                    return {"success": False, "error": "start_line must be less than or equal to end_line"}
-                
+                    return {
+                        "success": False,
+                        "error": "start_line must be less than or equal to end_line",
+                    }
+
                 content = "".join(lines[start_idx:end_idx])
             else:
                 content = "".join(lines)
-            
+
             return {
                 "success": True,
                 "content": content,
@@ -379,7 +479,10 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 "format": target_path.suffix.lower(),
             }
         except UnicodeDecodeError:
-            return {"success": False, "error": "File is not a valid text file (binary or encoding issue)"}
+            return {
+                "success": False,
+                "error": "File is not a valid text file (binary or encoding issue)",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -390,14 +493,13 @@ class FileManagerToolSet(FileManagerToolSetBase):
         content: str = "",
         overwrite: bool = True,
     ) -> dict:
-        """Use this tool to CREATE NEW files.
+        """Use this tool to CREATE NEW file.
 
         This tool writes content to a file, automatically creating parent
         directories if they do not exist.
 
-        IMPORTANT: For EDITING existing files, use `update_file` instead.
-        Using write_file to rewrite entire files when only small changes
-        are needed is wasteful and error-prone.
+        IMPORTANT: For EDITING existing file, use `update_file` instead.
+        DO NOT rewrite entire file when only small changes are needed, its is wasteful and error-prone.
 
         Use this tool when:
         - Creating a brand new file
@@ -448,7 +550,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         """Use this tool to edit an existing file. Follow these rules:
 
         1. Use this tool ONLY when making a SINGLE edit to a file. If you need to make
-           MULTIPLE different edits to the same file, use `batch_update_file` instead.
+           MULTIPLE different edits to one of multiple files, use `apply_patch` instead.
         2. The old_string must EXACTLY MATCH the text in the file, including whitespace
            and indentation. Copy the exact text you want to replace.
         3. When old_string appears multiple times in the file, use start_line and end_line
@@ -476,14 +578,16 @@ class FileManagerToolSet(FileManagerToolSetBase):
         try:
             with open(target_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             new_content, replacements, error = _replace_in_content(
-                content, old_string, new_string,
+                content,
+                old_string,
+                new_string,
                 replace_all=replace_all,
                 start_line=start_line,
                 end_line=end_line,
             )
-            
+
             if error:
                 return {"success": False, "error": error}
 
@@ -496,115 +600,6 @@ class FileManagerToolSet(FileManagerToolSetBase):
             return {"success": False, "error": "File is not a valid text file"}
         except Exception as e:
             logger.error(f"update_file failed for {file_path}: {e}")
-            return {"success": False, "error": str(e)}
-
-    @tool
-    async def batch_update_file(
-        self,
-        file_path: str,
-        replacements: list[dict],
-    ) -> dict:
-        """Use this tool to make multiple edits to an existing file. Follow these rules:
-
-        1. Use this tool ONLY when making MULTIPLE, NON-CONTIGUOUS edits to the same file.
-           If you are making a single edit, use `update_file` instead.
-        2. Do NOT make multiple parallel calls to `update_file` for the same file.
-           Use this tool to batch all edits into one call.
-        3. Each replacement in the list is applied sequentially. Later replacements
-           operate on the result of earlier ones.
-        4. For each replacement, old_string must EXACTLY MATCH the text in the file.
-
-        Args:
-            file_path: Path to the file to update (relative to workspace root).
-            replacements: List of replacement dicts, each containing:
-                - old_string (required): Exact string to find
-                - new_string (required): Replacement string
-                - start_line (optional): Limit search from this line (1-indexed)
-                - end_line (optional): Limit search to this line (1-indexed)
-                - replace_all (optional): Replace all occurrences (default: False)
-
-        Returns:
-            dict: {success: bool, results: list, total_replacements: int}
-
-        Example:
-            replacements = [
-                {"old_string": "import foo", "new_string": "import bar"},
-                {"old_string": "foo()", "new_string": "bar()", "replace_all": True},
-            ]
-        """
-        target_path = self.path / file_path
-        if not target_path.exists():
-            return {"success": False, "error": "File does not exist"}
-        if not target_path.is_file():
-            return {"success": False, "error": "Path is not a file"}
-        
-        if not replacements:
-            return {"success": False, "error": "replacements list is empty"}
-
-        try:
-            with open(target_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            results = []
-            current_content = content
-            
-            for i, repl in enumerate(replacements):
-                old_string = repl.get("old_string")
-                new_string = repl.get("new_string")
-                
-                if not old_string or new_string is None:
-                    results.append({
-                        "index": i,
-                        "success": False,
-                        "error": "old_string and new_string are required",
-                    })
-                    continue
-                
-                try:
-                    new_content, replaced_count, error = _replace_in_content(
-                        current_content,
-                        old_string,
-                        new_string,
-                        replace_all=repl.get("replace_all", False),
-                        start_line=repl.get("start_line"),
-                        end_line=repl.get("end_line"),
-                    )
-                    
-                    if error:
-                        results.append({"index": i, "success": False, "error": error})
-                    else:
-                        current_content = new_content
-                        results.append({
-                            "index": i,
-                            "success": True,
-                            "replacements": replaced_count,
-                        })
-                except Exception as e:
-                    results.append({
-                        "index": i,
-                        "success": False,
-                        "error": str(e),
-                    })
-            
-            # Check if any replacement succeeded
-            any_success = any(r["success"] for r in results)
-            
-            if any_success:
-                with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(current_content)
-            
-            all_success = all(r["success"] for r in results)
-            return {
-                "success": all_success,
-                "partial_success": any_success and not all_success,
-                "results": results,
-                "total_replacements": sum(r.get("replacements", 0) for r in results),
-            }
-
-        except UnicodeDecodeError:
-            return {"success": False, "error": "File is not a valid text file"}
-        except Exception as e:
-            logger.error(f"batch_update_file failed for {file_path}: {e}")
             return {"success": False, "error": str(e)}
 
     @tool
@@ -688,6 +683,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
             return {"success": False, "error": "File is not a PDF (wrong extension)"}
         try:
             import pymupdf
+
             with tempfile.TemporaryDirectory() as tmp_dir:
                 image_paths = []
                 with pymupdf.open(str(file_path)) as doc:
@@ -886,6 +882,321 @@ class FileManagerToolSet(FileManagerToolSetBase):
         except Exception as e:
             logger.error(f"Error fetching image base64 for {image_path}: {str(e)}")
             return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+    # =========================================================================
+    # Patch Application Tools
+    # =========================================================================
+
+    @tool
+    async def apply_patch(
+        self,
+        patch: str,
+        file_path: str | None = None,
+        fuzzy_threshold: float = 0.5,
+    ) -> dict:
+        """Apply patches to files with fuzzy matching support.
+
+        Automatically detects patch format and extracts file paths from headers.
+        Uses Google's diff-match-patch library for robust fuzzy matching.
+
+        **Quick Reference:**
+        - Single file: Provide unified diff
+        - Multi-file: Use unified diff or V4A format
+        - Create files: Use V4A with *** Create File: or unified diff with /dev/null
+        - Fuzzy matching: Default 0.5 works for most cases; use 0.8 for AI-generated patches
+
+        **Supported Formats:**
+
+        1. **Unified Diff** (Git diff style - RECOMMENDED):
+           Industry standard, multi-file support, human-readable.
+
+           Example:
+           ```
+           --- a/config.py
+           +++ b/config.py
+           @@ -1,2 +1,2 @@
+            DEBUG = True
+           -PORT = 8000
+           +PORT = 3000
+           ```
+
+        2. **V4A/Codex** (OpenAI format):
+           Explicit operation markers, good for complex multi-file changes.
+
+           Example:
+           ```
+           *** Begin Patch
+           *** Update File: api.py
+           @@ function @@
+           - old_implementation
+           + new_implementation
+
+           *** Create File: utils.py
+           + def helper():
+           +     pass
+
+           *** Delete File: legacy.py
+           *** End Patch
+           ```
+
+        Args:
+            patch: Patch content as string (format auto-detected).
+                  Can contain changes for multiple files.
+
+            file_path: Optional explicit file path.
+                      - For unified diff: overrides path from headers
+                      - For V4A: ignored (uses marker paths)
+                      Can be relative to workspace or absolute.
+
+            fuzzy_threshold: Matching tolerance (0.0-1.0, default 0.5).
+                           - 0.0: Exact match only
+                           - 0.5: Balanced (RECOMMENDED)
+                           - 0.8: Tolerant (good for AI patches)
+                           - 1.0: Maximum tolerance (use with caution)
+
+        Returns:
+            dict: Operation result with structure:
+            {
+                "success": bool,              # True if ALL operations succeeded
+                "message": str,               # Human-readable summary
+                "summary": {
+                    "total_files": int,       # Files processed
+                    "modified": int,          # Files updated
+                    "created": int,           # Files created
+                    "deleted": int,           # Files deleted
+                    "failed": int             # Failed operations
+                },
+                "files": [                    # Per-file details
+                    {
+                        "file": str,          # File path
+                        "action": str,        # "update"|"create"|"delete"
+                        "success": bool,      # Operation result
+                        "hunks_applied": int, # (updates only)
+                        "hunks_total": int,   # (updates only)
+                        "exact_match": bool,  # (updates only)
+                        "lines_added": int,   # (creates only)
+                        "error": str          # (failures only)
+                    }
+                ],
+                "failed_files": [str]         # Quick list of failures
+            }
+
+        Common Issues:
+            - "No valid operations found": Check patch format and headers
+            - "No hunks applied": Content mismatch - try higher fuzzy_threshold
+            - "File does not exist": File must exist for updates
+
+        Examples:
+            # Single file update
+            await apply_patch('''
+            --- a/hello.py
+            +++ b/hello.py
+            @@ -1,2 +1,2 @@
+             def hello():
+            -    return "Hello"
+            +    return "Hello, World!"
+            ''')
+
+            # Multi-file with V4A
+            await apply_patch('''
+            *** Begin Patch
+            *** Update File: config.py
+            - DEBUG = True
+            + DEBUG = False
+
+            *** Create File: new_module.py
+            + def new_feature():
+            +     pass
+            *** End Patch\n            ''')
+        """
+        return execute_patch_operations(
+            patch=patch,
+            workspace_root=self.path,
+            file_path=file_path,
+            fuzzy_threshold=fuzzy_threshold,
+        )
+
+    # =========================================================================
+    # File Search Tools
+    # =========================================================================
+
+    @tool
+    async def glob(
+        self,
+        pattern: str,
+        path: str | None = None,
+        respect_git_ignore: bool = True,
+    ) -> dict:
+        """Find files matching glob patterns.
+
+        Fast file search by name/path pattern using 'fd' tool.
+        Falls back to Python pathlib if 'fd' is unavailable.
+
+        Args:
+            pattern: Glob pattern to match files:
+                     - "*" matches any characters except /
+                     - "**" matches any characters including /
+                     - "?" matches single character
+                     - "[abc]" matches any character in brackets
+
+                     Examples:
+                     - "*.py" → all Python files in current dir
+                     - "**/*.py" → all Python files recursively
+                     - "test_*.py" → test files in current dir
+                     - "src/**/*.ts" → TypeScript files in src/
+
+            path: Directory to search from (default: workspace root).
+                  Can be relative (to workspace) or absolute path.
+
+            respect_git_ignore: Whether to respect .gitignore patterns (default: True).
+                               Set to False to search ignored files.
+
+        Returns:
+            dict: {
+                "success": bool,
+                "files": [
+                    {
+                        "path": str,        # Relative path from workspace root
+                        "name": str,        # File basename
+                        "size": int,        # Size in bytes
+                        "modified": str,    # ISO format timestamp
+                        "type": str         # "file" or "directory"
+                    }
+                ],
+                "total": int,               # Total matches found
+                "pattern": str,             # Echo of search pattern
+                        "message": str              # Human-readable summary
+            }
+
+            On error:
+            {
+                "success": false,
+                "error": str
+            }
+
+        Examples:
+            # Find all Python files (workspace root)
+            await glob("**/*.py")
+
+            # Find test files (workspace root)
+            await glob("**/test_*.py")
+
+            # Find files in specific directory (relative path)
+            await glob("*.json", path="config")
+
+            # Find files using absolute path
+            await glob("*.py", path="/absolute/path/to/directory")
+
+            # Include gitignored files
+            await glob("**/*.log", respect_git_ignore=False)
+        """
+        return glob_search(
+            pattern=pattern,
+            workspace_root=self.path,
+            path=path,
+            respect_git_ignore=respect_git_ignore,
+        )
+
+    @tool
+    async def grep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        file_pattern: str | None = None,
+        context_lines: int = 0,
+        case_sensitive: bool = False,
+        respect_git_ignore: bool = True,
+    ) -> dict:
+        """Search for text patterns within file contents.
+
+        Powerful content search using 'ripgrep' (rg) for speed.
+        Falls back to Python re module if 'rg' is unavailable.
+        Searches recursively by default, respecting .gitignore.
+
+        Args:
+            pattern: Text or regex pattern to search for.
+                     Supports full Rust regex syntax.
+
+                     Examples:
+                     - "TODO" → literal string
+                     - "def\\s+\\w+" → function definitions
+                     - "class\\s+\\w+" → class definitions
+                     - "import\\s+.*from" → import statements
+
+            path: Directory or file to search (default: workspace root).
+                  Can be relative or absolute.
+
+            file_pattern: Glob pattern to filter files (default: all text files).
+                         Only search in files matching this pattern.
+
+                         Examples:
+                         - "*.py" → only Python files
+                         - "*.{js,ts}" → JavaScript and TypeScript
+                         - "src/**/*.py" → Python files in src/
+
+            context_lines: Number of context lines before/after each match.
+                          - 0 = only matching line (default)
+                          - 1-3 = show surrounding context
+                          - Higher values help understand context
+
+            case_sensitive: Whether search is case-sensitive (default: False).
+
+            respect_git_ignore: Whether to respect .gitignore patterns (default: True).
+                               Set to False to search in ignored files/directories.
+
+        Returns:
+            dict: {
+                "success": bool,
+                "matches": [
+                    {
+                        "file": str,              # Relative path from workspace
+                        "line_number": int,       # Line number (1-indexed)
+                        "line_content": str,      # Matching line
+                        "context_before": [str],  # Lines before (if context_lines > 0)
+                        "context_after": [str],   # Lines after (if context_lines > 0)
+                        "column": int             # Column where match starts (1-indexed)
+                    }
+                ],
+                "total_matches": int,     # Total matching lines
+                "files_matched": int,     # Number of files with matches
+                "pattern": str,           # Echo of search pattern
+                "message": str            # Human-readable summary
+            }
+
+            On error:
+            {
+                "success": false,
+                "error": str
+            }
+
+        Examples:
+            # Find TODOs in Python files (workspace root)
+            await grep("TODO", file_pattern="*.py")
+
+            # Find function definitions with context
+            await grep("def\\s+\\w+", file_pattern="**/*.py", context_lines=2)
+
+            # Find specific API calls in relative path
+            await grep("api\\.post\\(", file_pattern="src/**/*.js")
+
+            # Search in specific file using relative path
+            await grep("class", path="main.py")
+
+            # Search using absolute path
+            await grep("TODO", path="/absolute/path/to/directory", file_pattern="*.py")
+
+            # Search in node_modules (gitignored directory)
+            await grep("version.*1.2.3", path="node_modules", respect_git_ignore=False)
+        """
+        return grep_search(
+            pattern=pattern,
+            workspace_root=self.path,
+            path=path,
+            file_pattern=file_pattern,
+            context_lines=context_lines,
+            case_sensitive=case_sensitive,
+            respect_git_ignore=respect_git_ignore,
+        )
 
 
 __all__ = ["FileManagerToolSet"]

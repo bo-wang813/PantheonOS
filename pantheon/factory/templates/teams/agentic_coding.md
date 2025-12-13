@@ -17,6 +17,7 @@ agentic_agent:
     - file_manager
     - python_interpreter
     - shell
+    - integrated_notebook
     - task
 ---
 

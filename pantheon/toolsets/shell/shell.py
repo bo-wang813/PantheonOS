@@ -55,10 +55,10 @@ class ShellToolSet(ToolSet):
         except Exception:
             logger.warning("Failed to propagate context variables to shell session")
 
-    @tool
+    @tool(exclude=True)
     async def new_shell(self) -> dict:
         """Create a new shell and return its id.
-        Use `run_command_in_shell` with the returned `shell_id` to run commands."""
+        Use `run_command` to run commands."""
         shell = AsyncShell()
         shell.env = self._prepare_shell_env()
         initial_output = await shell.start()
@@ -92,7 +92,7 @@ class ShellToolSet(ToolSet):
         logger.info(f"[dim]Shell closed: {shell_id[:8]}[/dim]")
         return {"success": True, "shell_id": shell_id}
 
-    @tool
+    @tool(exclude=True)
     async def run_command_in_shell(
         self,
         shell_id: str,
@@ -194,15 +194,51 @@ class ShellToolSet(ToolSet):
     @tool
     async def run_command(
         self,
-        command: str,
+        command: str | None = None,
+        shell_id: str | None = None,
+        shell_output: bool = False,
         timeout: int | None = None,
     ):
-        """Run shell command and return a structured result.
+        """Run a shell command and return the result.
+        
+        This tool automatically manages a shell session for you. Just provide the `command` 
+        to execute it in the current session.
 
         Args:
-            command: The command to run.
-            timeout: Optional timeout. Use None for long-running commands.
+            command: The command to run. Required unless `shell_output` is True.
+            timeout: Optional timeout in seconds.
+            shell_output: Set to True to fetch pending output without running a command.
+                Useful after a timeout or for checking long-running processes.
+            shell_id: Optional. Specify a particular shell ID to run the command in.
+                If not provided, the tool uses (and automatically creates if needed) 
+                the default shell for the current context. 
+                This allows you to continue working in the same session (preserving environment variables, etc).
+
+        Returns:
+            dict: The execution result with the following structure:
+            {
+                "success": bool,       # True if the command executed successfully
+                "output": str,         # Combined stdout and stderr
+                "error": str | None,   # Error message if success is False
+                "shell_id": str,       # The ID of the shell session used
+                "status": str          # "completed" or "timeout"
+            }
         """
+        if command is None and not shell_output:
+             return {
+                "success": False,
+                "error": "You must provide a command or set shell_output to True",
+            }
+        
+        # If shell_id is provided, use it directly (Manual Mode)
+        if shell_id:
+            return await self.run_command_in_shell(
+                shell_id=shell_id,
+                command=command,
+                timeout=timeout,
+            )
+
+        # Auto Mode (Client ID based)
         context_dict = dict(self.get_context() or {})
         client_id = context_dict.get("client_id")
         if client_id is None:
@@ -210,22 +246,23 @@ class ShellToolSet(ToolSet):
             logger.warning("No client id provided, using default client id.")
 
         initial_output = ""
-        shell_id = self.clientid_to_shellid.get(client_id)
+        # Resolve shell_id from client_id mapping
+        _mapped_shell_id = self.clientid_to_shellid.get(client_id)
 
         # Check if we need to create a new shell
-        if (shell_id is None) or (shell_id not in self.shells):
+        if (_mapped_shell_id is None) or (_mapped_shell_id not in self.shells):
             res = await self.new_shell()
-            shell_id = res["shell_id"]
+            _mapped_shell_id = res["shell_id"]
             initial_output = res["initial_output"]
-            self.clientid_to_shellid[client_id] = shell_id
+            self.clientid_to_shellid[client_id] = _mapped_shell_id
 
         # Check if shell is still alive before running command
-        if not self._is_shell_alive(shell_id):
-            shell_id = await self._restart_shell(client_id)
+        if not self._is_shell_alive(_mapped_shell_id):
+            _mapped_shell_id = await self._restart_shell(client_id)
             initial_output = ""  # New shell will have its own initial output
 
         result = await self.run_command_in_shell(
-            shell_id=shell_id,
+            shell_id=_mapped_shell_id,
             command=command,
             timeout=timeout,
         )
@@ -233,14 +270,15 @@ class ShellToolSet(ToolSet):
         # If the shell crashed, restart it but do not rerun the command automatically
         if not result.get("success") and self._should_restart(result.get("error")):
             logger.warning(
-                f"Shell command failed for shell {shell_id[:8]}: {result.get('error')}"
+                f"Shell command failed for shell {_mapped_shell_id[:8]}: {result.get('error')}"
             )
-            shell_id = await self._restart_shell(client_id)
+            _mapped_shell_id = await self._restart_shell(client_id) # Update mapping
             return result
 
         if not result.get("success"):
             return result
-
+        
+        # Prepend initial output from new shell creation if applicable
         if initial_output and result.get("success"):
             combined_output = result.get("output") or ""
             result["output"] = (

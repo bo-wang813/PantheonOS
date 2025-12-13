@@ -10,7 +10,7 @@ import loguru
 from pantheon.agent import Agent
 from pantheon.toolsets.python import PythonInterpreterToolSet
 from pantheon.toolsets.web import WebToolSet
-from pantheon.toolsets.file_manager import FileManagerToolSet
+from pantheon.toolsets.file import FileManagerToolSet
 from pantheon.toolsets.shell import ShellToolSet
 from pantheon.toolsets.notebook import IntegratedNotebookToolSet
 from pantheon.team.aat import AgentAsToolTeam

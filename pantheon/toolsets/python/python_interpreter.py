@@ -123,29 +123,44 @@ class PythonInterpreterToolSet(ToolSet):
     async def run_python_code(
         self,
         code: str,
+        interpreter_id: str | None = None,
         result_var_name: str | None = None,
     ):
-        """Run Python code in a new interpreter and return the result.
-        If you use this function, don't need to use `new_interpreter` and `delete_interpreter`.
+        """Run Python code and return the result.
+
+        This tool automatically manages a Python interpreter session for you.
+        Variables and state are preserved between calls in the same session.
 
         Args:
             code: The Python code to run.
-            result_var_name: The name of the variable you want to get the result from.
-                If not needed, set to None. Default is None.
+            result_var_name: Optional. The name of the variable to return the value of.
+                If not provided, the tool returns the captured stdout/stderr.
+            interpreter_id: Optional. The specific interpreter ID to run the code in.
+                If not provided, the tool uses the default interpreter for the current context.
+                Only configure this parameter if you need to manage multiple independent interpreter sessions.
 
         Returns:
-            A dictionary with the result, stdout, and stderr.
+            dict: The execution result with the following structure:
+            {
+                "success": bool,        # True if execution was successful
+                "result": Any | None,   # The value of `result_var_name` if specified
+                "stdout": str,          # Captured standard output
+                "stderr": str,          # Captured standard error
+            }
         """
-        context_dict = dict(self.get_context() or {})
-        client_id = context_dict.get("client_id")
-        if client_id is None:
-            client_id = "default"
-            logger.warning("No client id provided, using default client id.")
-        p_id = self.clientid_to_interpreterid.get(client_id)
-        if (p_id is None) or (p_id not in self.interpreters):
-            create_resp = await self.new_interpreter()
-            p_id = create_resp["interpreter_id"]
-            self.clientid_to_interpreterid[client_id] = p_id
+        if interpreter_id:
+             p_id = interpreter_id
+        else:
+            context_dict = dict(self.get_context() or {})
+            client_id = context_dict.get("client_id")
+            if client_id is None:
+                client_id = "default"
+                logger.warning("No client id provided, using default client id.")
+            p_id = self.clientid_to_interpreterid.get(client_id)
+            if (p_id is None) or (p_id not in self.interpreters):
+                create_resp = await self.new_interpreter()
+                p_id = create_resp["interpreter_id"]
+                self.clientid_to_interpreterid[client_id] = p_id
 
         await self._inject_runtime_context(p_id)
 
@@ -250,7 +265,7 @@ class PythonInterpreterToolSet(ToolSet):
             "stderr": stderr,
         }
 
-    @tool
+    @tool(exclude=True)
     async def run_code_in_interpreter(
         self,
         code: str,
@@ -292,7 +307,7 @@ class PythonInterpreterToolSet(ToolSet):
         res["success"] = True
         return res
 
-    @tool
+    @tool(exclude=True)
     async def new_interpreter(self) -> dict:
         """Create a new Python interpreter and return its id.
         You can use `run_code_in_interpreter` to run code in the interpreter,
@@ -337,7 +352,7 @@ class PythonInterpreterToolSet(ToolSet):
             await self.run_code_in_interpreter(self.init_code, job.id)
         return {"success": True, "interpreter_id": job.id}
 
-    @tool
+    @tool(exclude=True)
     async def delete_interpreter(self, interpreter_id: str) -> dict:
         """Delete an interpreter.
 
@@ -357,7 +372,7 @@ class PythonInterpreterToolSet(ToolSet):
         self._bootstrapped.discard(interpreter_id)
         return {"success": True, "interpreter_id": interpreter_id}
 
-    @tool
+    @tool(exclude=True)
     async def list_interpreters(self) -> dict:
         """List all interpreters."""
         interpreters = [
@@ -368,6 +383,35 @@ class PythonInterpreterToolSet(ToolSet):
             for interpreter_id, job in self.jobs.items()
         ]
         return {"success": True, "interpreters": interpreters}
+    @tool
+    async def manage_interpreters(
+        self,
+        operation: str,
+        interpreter_id: str | None = None,
+    ) -> dict:
+        """Manage Python interpreters.
+
+        Args:
+            operation: The operation to perform. choose from "create", "list", "delete".
+            interpreter_id: The id of the interpreter to delete. Required for "delete" operation.
+        """
+        if operation == "create":
+            return await self.new_interpreter()
+        elif operation == "list":
+            return await self.list_interpreters()
+        elif operation == "delete":
+            if interpreter_id is None:
+                return {
+                    "success": False,
+                    "error": "interpreter_id is required for delete operation",
+                }
+            return await self.delete_interpreter(interpreter_id)
+        else:
+            return {
+                "success": False,
+                "error": f"Unknown operation: {operation}",
+            }
+
 
     async def run_setup(self):
         """Setup the toolset before running it."""

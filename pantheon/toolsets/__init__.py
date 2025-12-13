@@ -3,7 +3,7 @@ from .python import PythonInterpreterToolSet
 from .r import RInterpreterToolSet
 from .julia import JuliaInterpreterToolSet
 from .shell import ShellToolSet
-from .file_manager import FileManagerToolSet
+from .file import FileManagerToolSet
 from .web import WebToolSet
 from .notebook import IntegratedNotebookToolSet, JupyterKernelToolSet, NotebookToolSet
 from .scraper import ScraperToolSet

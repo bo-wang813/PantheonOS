@@ -4,6 +4,7 @@ Provides task_boundary and notify_user tools for managing
 workflow modes (PLANNING/EXECUTION/VERIFICATION or RESEARCH/ANALYSIS/INTERPRETATION).
 """
 import json
+from pathlib import Path
 from typing import Optional
 
 from ...toolset import ToolSet, tool
@@ -15,13 +16,42 @@ from .ephemeral import generate_ephemeral_message
 class TaskToolSet(ToolSet):
     """Local task toolset - one instance per Agent, state persists across run() calls."""
     
+    STATE_FILE = "task_state.json"
+    
     def __init__(self, name = "task", **kwargs):
         super().__init__(name, **kwargs)
         self.state = ConversationState()
-        self._last_task_name: Optional[str] = None
-        self._last_mode: Optional[str] = None
-        self._last_task_status: Optional[str] = None
-        self._last_task_summary: Optional[str] = None
+        self._last: dict[str, Optional[str]] = {}  # task_name, mode, status, summary
+        self._loaded = False
+    
+    def _save(self, brain_dir: str):
+        """Persist state to disk."""
+        path = Path(brain_dir) / self.STATE_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"last": self._last, "state": self.state.to_dict()}
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    
+    def _load(self, brain_dir: str):
+        """Lazy load state from disk (only once)."""
+        if self._loaded:
+            return
+        self._loaded = True
+        path = Path(brain_dir) / self.STATE_FILE
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            self._last = data.get("last", {})
+            self.state = ConversationState.from_dict(data.get("state", {}))
+            logger.info(f"[TaskToolSet] Restored state from {path}")
+        except Exception as e:
+            logger.warning(f"[TaskToolSet] Failed to load state: {e}")
+    
+    def _get_brain_dir(self, context: dict) -> str:
+        """Get brain_dir path from context."""
+        client_id = context.get("client_id", "default")
+        from ...settings import get_settings
+        return str(get_settings().brain_dir / client_id)
     
     @tool
     async def task_boundary(
@@ -31,7 +61,7 @@ class TaskToolSet(ToolSet):
         TaskSummary: str,
         TaskStatus: str,
         PredictedTaskSize: int,
-        waitForPreviousTools: bool = False
+        waitForPreviousTools: bool = False,
     ) -> dict:
         """
         CRITICAL: You must ALWAYS call this tool as the VERY FIRST tool in your list of tool calls, before any other tools.
@@ -50,10 +80,10 @@ class TaskToolSet(ToolSet):
             waitForPreviousTools: If true, wait for all previous tool calls to complete before executing.
         """
         # Handle %SAME% substitution
-        task_name = self._last_task_name if TaskName == "%SAME%" else TaskName
-        mode = self._last_mode if Mode == "%SAME%" else Mode
-        task_summary = self._last_task_summary if TaskSummary == "%SAME%" else TaskSummary
-        task_status = self._last_task_status if TaskStatus == "%SAME%" else TaskStatus
+        task_name = self._last.get("task_name") if TaskName == "%SAME%" else TaskName
+        mode = self._last.get("mode") if Mode == "%SAME%" else Mode
+        task_summary = self._last.get("summary") if TaskSummary == "%SAME%" else TaskSummary
+        task_status = self._last.get("status") if TaskStatus == "%SAME%" else TaskStatus
         
         # Validate mode: accept known modes, warn for unknown but allow
         if not mode or not mode.strip():
@@ -64,12 +94,21 @@ class TaskToolSet(ToolSet):
             logger.warning(f"Unknown mode '{mode}', proceeding anyway. Known modes: {ModeSemantics.ALL_KNOWN_MODES}")
         
         # Store for next %SAME% reference
-        self._last_task_name = task_name
-        self._last_mode = mode_upper  # Normalize to uppercase
-        self._last_task_summary = task_summary
-        self._last_task_status = task_status
+        self._last = {
+            "task_name": task_name,
+            "mode": mode_upper,
+            "summary": task_summary,
+            "status": task_status,
+        }
         
         self.state.on_task_boundary(task_name, mode_upper, task_status, task_summary)
+        
+        # Persist state using context from toolset
+        context = self.get_context()
+        if context:
+            brain_dir = self._get_brain_dir(context)
+            self._save(brain_dir)
+        
         return {"success": True, "mode": mode_upper, "task": task_name}
     
     @tool
@@ -80,7 +119,7 @@ class TaskToolSet(ToolSet):
         Message: str,
         ConfidenceJustification: str,
         ConfidenceScore: float,
-        waitForPreviousTools: bool = True
+        waitForPreviousTools: bool = True,
     ) -> dict:
         """
         This tool is used to communicate with the user.
@@ -106,9 +145,16 @@ class TaskToolSet(ToolSet):
             waitForPreviousTools: Should always be True for notify_user to ensure sequential execution.
         """
         self.state.on_notify_user(PathsToReview)
+        
+        # Persist state using context from toolset
+        context = self.get_context()
+        if context:
+            brain_dir = self._get_brain_dir(context)
+            self._save(brain_dir)
+        
         return {
             "success": True, 
-            "interrupt": BlockedOnUser,  # Mimics transfer mechanism
+            "interrupt": BlockedOnUser,
             "message": Message,
             "paths": PathsToReview
         }
@@ -123,21 +169,15 @@ class TaskToolSet(ToolSet):
         - content: The EU message content
         - role: "user"
         """
-        client_id = context_variables.get("client_id", "default")
+        brain_dir = self._get_brain_dir(context_variables)
         
-        # Get brain_dir from settings
-        from ...settings import get_settings
-        settings = get_settings()
-        brain_dir = settings.brain_dir / client_id
+        # Lazy load state from disk on first call
+        self._load(brain_dir)
         
-        # Convert to relative path from workspace (which is pantheon_dir) if possible 
-        # or just use absolute path string if that's what generate_ephemeral_message expects
-        # generate_ephemeral_message likely needs a string path
-        
-        eu_content = generate_ephemeral_message(self.state, str(brain_dir))
+        eu_content = generate_ephemeral_message(self.state, brain_dir)
         
         # Debug logging
-        logger.info(f"[TaskToolSet] Generating EU for client_id={client_id}")
+        logger.info(f"[TaskToolSet] Generating EU for brain_dir={brain_dir}")
         logger.info(f"[TaskToolSet] State: active_task={self.state.active_task}, "
                    f"artifacts={self.state.created_artifacts}, "
                    f"tools_since_boundary={self.state.tools_since_boundary}, "
@@ -163,12 +203,7 @@ class TaskToolSet(ToolSet):
             tool_messages: Tool response messages
             context_variables: Agent context variables
         """
-        client_id = context_variables.get("client_id", "default")
-        
-        # Get brain_dir from settings
-        from ...settings import get_settings
-        settings = get_settings()
-        brain_dir = str(settings.brain_dir / client_id)
+        brain_dir = self._get_brain_dir(context_variables)
         
         # Update tool counter
         self.state.on_tool_call(len(tool_calls))
@@ -206,3 +241,6 @@ class TaskToolSet(ToolSet):
                         self.state.on_artifact_created(file_path)
             except (json.JSONDecodeError, KeyError):
                 continue
+        
+        # Persist state after processing
+        self._save(brain_dir)

@@ -780,6 +780,7 @@ class Agent:
 
         return functions
 
+
     async def _handle_tool_calls(
         self,
         tool_calls: list,
@@ -792,58 +793,76 @@ class Agent:
 
         async def _run_single_tool_call(call: dict) -> dict:
             func_name = call["function"]["name"]
+            tool_call_id = call["id"]
+            start_time = time.time()
+            
+            # Try to parse arguments
             try:
                 args_str = call["function"]["arguments"]
                 if not args_str.endswith("}"):
                     args_str = args_str + "}"
                 params = json.loads(call["function"]["arguments"]) or {}
+                parse_error = None
             except Exception as e:
                 logger.error(f"Failed to parse arguments for tool '{func_name}': {e}")
-                raise e
-            tool_call_id = call["id"]
+                params = {}
+                parse_error = e
+            
             allow_timeout = func_name != "call_agent"
-            start_time = time.time()
-            call_task = asyncio.create_task(
-                self.call_tool(
-                    func_name, params, context_variables, tool_call_id=tool_call_id
+            
+            # Handle parse error or execute tool
+            if parse_error:
+                # Treat as execution failure
+                truncated = call["function"]["arguments"][:200]
+                if len(call["function"]["arguments"]) > 200:
+                    truncated += "..."
+                result = (
+                    f"Error: Failed to parse tool arguments.\n"
+                    f"JSON error: {parse_error}\n"
+                    f"Raw arguments: {truncated}"
                 )
-            )
-
-            try:
-                result: Any
-                while True:
-                    done, _ = await asyncio.wait(
-                        {call_task},
-                        timeout=time_delta,
-                        return_when=asyncio.FIRST_COMPLETED,
+            else:
+                call_task = asyncio.create_task(
+                    self.call_tool(
+                        func_name, params, context_variables, tool_call_id=tool_call_id
                     )
-                    if call_task in done:
-                        result = call_task.result()
-                        break
+                )
 
-                    logger.debug("Check stop when tool calling")
-                    elapsed = time.time() - start_time
-                    if allow_timeout and timeout is not None and elapsed > timeout:
+                try:
+                    result: Any
+                    while True:
+                        done, _ = await asyncio.wait(
+                            {call_task},
+                            timeout=time_delta,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if call_task in done:
+                            result = call_task.result()
+                            break
+
+                        logger.debug("Check stop when tool calling")
+                        elapsed = time.time() - start_time
+                        if allow_timeout and timeout is not None and elapsed > timeout:
+                            call_task.cancel()
+                            raise asyncio.TimeoutError()
+                        if check_stop is not None and check_stop(elapsed):
+                            call_task.cancel()
+                            raise StopRunning()
+                    context_variables[tool_call_id] = result
+                except StopRunning:
+                    raise
+                except SystemExit as e:
+                    if not call_task.done():
                         call_task.cancel()
-                        raise asyncio.TimeoutError()
-                    if check_stop is not None and check_stop(elapsed):
+                    result = f"SystemExit: {e}"
+                    context_variables[tool_call_id] = result
+                except Exception as e:
+                    if not call_task.done():
                         call_task.cancel()
-                        raise StopRunning()
-                context_variables[tool_call_id] = result
-            except StopRunning:
-                raise
-            except SystemExit as e:
-                if not call_task.done():
-                    call_task.cancel()
-                result = f"SystemExit: {e}"
-                context_variables[tool_call_id] = result
-            except Exception as e:
-                if not call_task.done():
-                    call_task.cancel()
-                    # with contextlib.suppress(Exception):
-                    #    await call_task
-                result = repr(e)
-                context_variables[tool_call_id] = result
+                        # with contextlib.suppress(Exception):
+                        #    await call_task
+                    result = repr(e)
+                    context_variables[tool_call_id] = result
 
             end_timestamp = time.time()
             execution_duration = end_timestamp - start_time
@@ -1638,3 +1657,4 @@ async def _call_agent(
             "success": False,
             "error": str(e),
         }
+

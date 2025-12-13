@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 
 from ...toolset import tool
-from ..file_manager import FileManagerToolSetBase
+from ..file.file_manager import FileManagerToolSetBase
 
 
 class FileTransferToolSet(FileManagerToolSetBase):

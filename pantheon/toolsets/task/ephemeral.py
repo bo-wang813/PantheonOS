@@ -15,12 +15,17 @@ ACTIVE_TASK_REMINDER = """\
 <active_task_reminder>
 Remember to update the task as appropriate. The current task is:
 task_name:"{task_name}" task_status:"{task_status}" task_summary:"{task_summary}" mode:{ctx_mode}
-As a rule of thumb, you should update the status and summary around once every 5 tools. You have not updated the task in {tools_since_update} tools since the last update. You should make task boundary updates concurrently with other tools when starting new work phases, STARTING with the task boundary tool if calling multiple.
-Do not update the status too frequently, leave at minimum two tool calls in between status updates. Too frequent updates will overwhelm the user. Never make two status updates in a row without doing anything in between.
-If you are going to either update the task boundary OR update the artifact task.md file you should do so concurrently with other tools, starting with the task boundary before calling other tools. When using the task boundary if you are going to use the same task name / task status / task summary as the current task use %SAME% as the argument value for the corresponding field instead.
-CRITICAL REMINDER: The TaskStatus argument for task boundary should describe the NEXT STEPS, NOT the previous steps. The TaskSummary is used to describe the previous steps.
-REMEMBER: since you are in the middle of a task, the user WILL NOT SEE ANY OF YOUR MESSAGES. THE ONLY WAY TO COMMUNICATE WITH THE USER IS VIA THE notify_user TOOL.
-YOUR CURRENT MODE IS: {ctx_mode}. Make sure to embody this mindset as explained in your system prompt. Take this very seriously.
+Tools since last update: {tools_since_update}
+
+TASK UPDATE GUIDELINES:
+- Update task_boundary only when entering a NEW work phase — NOT with every tool call
+- Do not update the status too frequently, a work phase typically spans around 5 tool calls; update status/summary accordingly, Never make two status updates in a row without doing anything in between.
+- If calling task_boundary with other tools in parallel, list task_boundary FIRST
+- Use %SAME% for unchanged fields (TaskName, Mode, TaskStatus, TaskSummary)
+- CRITICAL REMINDER: TaskStatus describes NEXT STEPS; TaskSummary describes what you've DONE
+
+YOUR CURRENT MODE IS: {ctx_mode}. Embody this mindset.
+REMEMBER: User WILL NOT SEE your messages. Use notify_user to communicate.
 </active_task_reminder>"""
 
 NO_ACTIVE_TASK_REMINDER = """\

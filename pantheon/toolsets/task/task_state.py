@@ -1,6 +1,6 @@
 """Task state management for Modal Workflow System."""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, fields
 from typing import Optional
 
 
@@ -158,6 +158,27 @@ class ConversationState:
     # Conditional flags (deprecated, kept for backward compatibility)
     plan_edited_in_planning: bool = False
     pending_review_paths: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """Convert state to dictionary."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ConversationState":
+        """Create state from dictionary."""
+        if not data:
+            return cls()
+            
+        # Filter keys to match fields (safety) and copy to avoid mutating input
+        valid_keys = {f.name for f in fields(cls)}
+        init_data = {k: v for k, v in data.items() if k in valid_keys}
+        
+        # Handle nested active_task
+        if init_data.get("active_task") and isinstance(init_data["active_task"], dict):
+            init_data["active_task"] = TaskInfo(**init_data["active_task"])
+            
+        return cls(**init_data)
+
     
     def on_task_boundary(self, name: str, mode: str, status: str, summary: str):
         """Called when task_boundary tool is invoked."""
