@@ -232,6 +232,36 @@ class Settings:
     def skills_dir(self) -> Path:
         return self.pantheon_dir / "skills"
 
+    @property
+    def ace_dir(self) -> Path:
+        """Directory for ACE long-term memory data."""
+        return self.pantheon_dir / "ace"
+
+    def get_ace_config(self) -> Dict[str, Any]:
+        """
+        Get ACE (Agentic Context Engineering) configuration.
+        
+        Returns:
+            Dict with ACE config: enable, skillbook_path, learning_model, etc.
+        """
+        self._ensure_loaded()
+        ace = self._settings.get("ace", {})
+        
+        return {
+            "enable": ace.get("enable", True),
+            "skillbook_path": str(
+                self.ace_dir / ace.get("skillbook_path", "skillbook.json")
+            ),
+            "learning_model": ace.get("learning_model", "gpt-4o-mini"),
+            "learning_dir": str(
+                self.ace_dir / ace.get("learning_dir", "learning")
+            ),
+            "max_skills_per_section": ace.get("max_skills_per_section", 30),
+            "max_content_length": ace.get("max_content_length", 500),
+            "cleanup_after_learning": ace.get("cleanup_after_learning", False),
+            "enable_agent_scope": ace.get("enable_agent_scope", False),
+        }
+
     def get_context_variables(self) -> dict[str, str]:
         """Get context variables for system prompt injection.
 

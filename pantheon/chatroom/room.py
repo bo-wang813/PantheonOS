@@ -13,6 +13,7 @@ from ..factory import (
     TeamConfig,
 )
 from ..memory import MemoryManager
+from ..settings import get_settings
 from ..team import PantheonTeam
 from ..toolset import ToolSet, tool
 from ..utils.log import logger
@@ -60,6 +61,8 @@ class ChatRoom(ToolSet):
         check_before_chat: Callable | None = None,
         enable_nats_streaming: bool = False,
         default_team: "PantheonTeam | None" = None,
+        enable_ace: bool | None = None,
+        ace_config: dict | None = None,
         **kwargs,
     ):
         # Initialize ToolSet (will handle worker creation in run())
@@ -134,6 +137,9 @@ class ChatRoom(ToolSet):
         # Background tasks management (for non-blocking operations like chat renaming)
         self._background_tasks: set[asyncio.Task] = set()
 
+        # ACE (Agentic Context Engineering) long-term memory
+        self._init_ace(enable_ace, ace_config)
+
     async def _get_endpoint_service(self):
         """Get endpoint service object (instance or RemoteService)."""
         if self._endpoint_embed:
@@ -156,6 +162,16 @@ class ChatRoom(ToolSet):
         endpoint_service = await self._get_endpoint_service()
         return await call_endpoint_method(
             endpoint_service, endpoint_method_name=endpoint_method_name, **kwargs
+        )
+
+    def _init_ace(
+        self, enable_ace: bool | None = None, ace_config: dict | None = None
+    ) -> None:
+        """Initialize ACE long-term memory resources."""
+        from ..ace import create_ace_resources
+        
+        self._skillbook, self._ace_pipeline = create_ace_resources(
+            enable=enable_ace, config=ace_config
         )
 
     async def run(self, log_level: str | None = None, remote: bool = True):
@@ -193,6 +209,11 @@ class ChatRoom(ToolSet):
             logger.info("ChatRoom: NATS streaming enabled")
         else:
             logger.info("ChatRoom: NATS streaming disabled")
+
+        # Start ACE learning pipeline
+        if self._ace_pipeline is not None:
+            await self._ace_pipeline.start()
+            logger.info("ChatRoom: ACE learning pipeline started")
 
     def _save_team_template_to_memory(self, memory, template_obj: dict) -> None:
         """Save TeamConfig to memory for persistence (new format)."""
@@ -331,7 +352,11 @@ class ChatRoom(ToolSet):
         logger.info(f"Created {len(all_agents)} agents")
 
         # ===== STEP 4: Create and setup team =====
-        team = PantheonTeam(agents=all_agents)
+        team = PantheonTeam(
+            agents=all_agents,
+            skillbook=self._skillbook,
+            ace_pipeline=self._ace_pipeline,
+        )
         await team.async_setup()
 
         num_agents = len(team.team_agents)

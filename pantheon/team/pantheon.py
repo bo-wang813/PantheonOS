@@ -1,5 +1,6 @@
 import re
 import uuid
+from typing import TYPE_CHECKING, List, Optional
 
 from ..agent import (
     Agent,
@@ -12,6 +13,9 @@ from ..memory import Memory
 from ..utils.log import logger
 from ..utils.misc import run_func
 from .base import Team
+
+if TYPE_CHECKING:
+    from ..ace import ACELearningPipeline, Skillbook
 
 
 def _slugify(name: str) -> str:
@@ -118,6 +122,8 @@ class PantheonTeam(Team):
         use_summary: bool = False,
         max_delegate_depth: int | None = 5,
         allow_transfer: bool = True,
+        skillbook: Optional["Skillbook"] = None,
+        ace_pipeline: Optional["ACELearningPipeline"] = None,
     ):
         """Initialize PantheonTeam with unified agent architecture.
 
@@ -127,6 +133,8 @@ class PantheonTeam(Team):
                          when delegating tasks.
             max_delegate_depth: Maximum depth for nested call_agent calls.
             allow_transfer: If True, add transfer_to_agent tool to agents.
+            skillbook: Optional ACE Skillbook for long-term memory.
+            ace_pipeline: Optional ACE learning pipeline.
 
         Note:
             All agents are equal - the first one is used as the default
@@ -139,11 +147,72 @@ class PantheonTeam(Team):
         self.use_summary = use_summary
         self.max_delegate_depth = max_delegate_depth
         self.allow_transfer = allow_transfer
+        
+        # ACE long-term memory
+        self._skillbook = skillbook
+        self._ace_pipeline = ace_pipeline
 
         super().__init__(agents)
 
         # Keep triage reference for backward compatibility (first agent)
         self.triage = self.team_agents[0]
+        
+        # Inject skillbook to all agents at init time
+        if self._skillbook:
+            self._inject_skillbook_to_agents()
+
+    def _inject_skillbook_to_agents(self) -> None:
+        """Inject relevant skillbook content into all agent instructions."""
+        for agent in self.team_agents:
+            self._inject_skillbook_to_agent(agent)
+
+    def _inject_skillbook_to_agent(self, agent) -> None:
+        """Inject skillbook content into a single agent's instructions."""
+        if not self._skillbook:
+            return
+        
+        # Check for any skillbook header to avoid duplicate injection
+        if "📌 User Rules" in agent.instructions or "📚 Learned" in agent.instructions:
+            return
+        
+        skills_prompt = self._skillbook.as_prompt(agent.name)
+        if skills_prompt:
+            agent.instructions += f"\n\n{skills_prompt}"
+            logger.debug(f"Injected skillbook into agent: {agent.name}")
+
+    def _submit_learning(
+        self,
+        agent_name: str,
+        messages: List[dict],
+        parent_question: Optional[str] = None,
+    ) -> None:
+        """Submit learning data to ACE pipeline.
+        
+        Args:
+            agent_name: Name of the agent that produced the trajectory
+            messages: List of messages from the conversation
+            parent_question: For sub_agent, the delegation instruction
+        """
+        from ..ace.pipeline import build_learning_input
+        from ..settings import get_settings
+        
+        settings = get_settings()
+        ace_config = settings.get_ace_config()
+        
+        turn_id = str(uuid.uuid4())
+        learning_input = build_learning_input(
+            turn_id=turn_id,
+            agent_name=agent_name,
+            messages=messages,
+            learning_dir=ace_config["learning_dir"],
+        )
+        
+        # For sub_agent, use delegation instruction as question
+        if parent_question:
+            learning_input.question = parent_question
+        
+        self._ace_pipeline.submit(learning_input)
+        logger.debug(f"Submitted learning for {agent_name}, turn_id={turn_id}")
 
     def get_active_agent(self, memory: Memory) -> Agent | RemoteAgent:
         active_agent_name = memory.extra_data.get("active_agent")
@@ -279,17 +348,26 @@ class PantheonTeam(Team):
                 child_memory = Memory(
                     name=f"{target_agent.name}-{execution_context_id}"
                 )
+                
                 response = await target_agent.run(
                     task_message,
                     memory=child_memory,
                     use_memory=False,
-                    update_memory=False,
+                    update_memory=True,  # Must be True for ACE learning to capture messages
                     process_step_message=wrapped_step,
                     process_chunk=wrapped_chunk,
                     execution_context_id=execution_context_id,
                     context_variables=child_context_variables,
                     allow_transfer=False,
                 )
+
+                # Submit sub_agent learning (child_memory is the complete conversation)
+                if self._ace_pipeline:
+                    self._submit_learning(
+                        agent_name=target_agent.name,
+                        messages=child_memory._messages,
+                        parent_question=instruction,
+                    )
 
                 content = response.content if response else ""
                 return content
@@ -366,6 +444,10 @@ class PantheonTeam(Team):
         await self.async_setup()
         if memory is None:
             memory = Memory(name="pantheon-team")
+        
+        # Record turn start for learning
+        turn_start_index = len(memory._messages)
+        
         while True:
             active_agent = self.get_active_agent(memory)
             resp = await active_agent.run(msg, memory=memory, **kwargs)
@@ -385,6 +467,17 @@ class PantheonTeam(Team):
                 self.set_active_agent(memory, resp.to_agent)
                 msg = tool_message
             else:
+                # Submit main agent learning (exclude sub_agent messages)
+                if self._ace_pipeline:
+                    current_messages = [
+                        m for m in memory._messages[turn_start_index:]
+                        if m.get("execution_context_id") is None
+                    ]
+                    if current_messages:
+                        self._submit_learning(
+                            agent_name=active_agent.name,
+                            messages=current_messages,
+                        )
                 return resp
 
     def get_target_agent(self, agent_name: str, instruction: str) -> Agent:

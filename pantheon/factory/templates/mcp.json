@@ -1,36 +1,36 @@
 {
     "$schema": "https://pantheon.dev/schemas/mcp.json",
     "version": "1.0.0",
-    // ===== MCP 服务器配置 =====
-    // Model Context Protocol 服务器，提供扩展工具能力
-    // 每个服务器暴露在独立 URL 路径：http://localhost:3000/mcp/{server_name}
+    // ===== MCP Server Configuration =====
+    // Model Context Protocol servers provide extended tool capabilities
+    // Each server is exposed at an independent URL path: http://localhost:3000/mcp/{server_name}
     //
-    // 支持两种类型：
-    // - stdio: 本地子进程，STDIO 传输（Endpoint 管理生命周期）
-    // - http: 连接已有远程 HTTP 端点（无进程管理）
-    // 启动 Endpoint 时自动启动的 MCP 服务器列表
+    // Two types are supported:
+    // - stdio: Local subprocess with STDIO transport (Endpoint manages lifecycle)
+    // - http: Connect to existing remote HTTP endpoint (no process management)
+    // List of MCP servers to auto-start when Endpoint starts
     "auto_start": [],
     "servers": {
-        // === 示例 1: 本地 STDIO 服务器（Endpoint 管理启动）===
+        // === Example 1: Local STDIO Server (Endpoint managed startup) ===
         "biomcp": {
             "type": "stdio",
             "command": "uv run --with biomcp-python biomcp run",
             "env": {
-                // 环境变量引用语法：${ENV_VAR_NAME}
+                // Environment variable reference syntax: ${ENV_VAR_NAME}
                 // "NCI_API_KEY": "${NCI_API_KEY}"
             },
-            "description": "BioMCP - 生物信息学工具"
+            "description": "BioMCP - Bioinformatics tools"
         },
         "context7": {
             "type": "stdio",
             "command": "npx -y @upstash/context7-mcp",
-            "description": "Context7 - 文档查询工具"
+            "description": "Context7 - Documentation query tools"
         }
-        // === 示例 2: 远程 HTTP 端点（已运行的服务）===
+        // === Example 2: Remote HTTP Endpoint (Already running service) ===
         // "web_search": {
         //   "type": "http",
         //   "uri": "https://api.example.com/mcp",
-        //   "description": "Web Search - 远程 MCP 服务"
+        //   "description": "Web Search - Remote MCP service"
         // }
     }
 }

@@ -1,105 +1,128 @@
 {
     "$schema": "https://pantheon.dev/schemas/settings.json",
     "version": "1.0.0",
-    // ===== 环境文件配置 =====
-    // 指定环境变量文件路径，相对于项目目录
+    // ===== Environment File Configuration =====
+    // Path to environment variables file, relative to project directory
     "env_file": ".env",
-    // ===== Endpoint 服务配置 =====
+    // ===== Endpoint Service Configuration =====
     "endpoint": {
         "service_name": "pantheon-chatroom-endpoint",
-        // 工作目录：Endpoint 的工作目录
+        // Workspace: Endpoint's working directory (relative to PWD/Project root/Module load path)
         "workspace_path": ".",
         "log_level": "INFO",
-        // 是否允许通过 Endpoint 传输文件
+        // Whether to allow file transfer through Endpoint
         "allow_file_transfer": true,
-        // 本地 ToolSet 调用超时（秒）
+        // Local ToolSet call timeout (seconds)
         "local_toolset_timeout": 600,
-        // 本地 ToolSet 执行模式：
-        // - "direct": 直接在当前线程执行（快，适合轻量任务）
-        // - "thread": 在独立线程执行（隔离，适合重任务）
+        // Local ToolSet execution mode:
+        // - "direct": Execute in current thread (fast, for lightweight tasks)
+        // - "thread": Execute in separate thread (isolated, for heavy tasks)
         "local_toolset_execution_mode": "direct"
     },
-    // ===== 内置服务配置 =====
-    // Service modes: 指定服务运行模式
-    // - "local": 在 Endpoint 同进程运行（快，使用 ThreadJob 隔离）
-    // - "remote": 在独立进程运行（慢，更好隔离）
+    // ===== Built-in Services Configuration =====
+    // Service modes: Specify service runtime modes
+    // - "local": Run in Endpoint's process (fast, uses ThreadJob isolation)
+    // - "remote": Run in separate process (slower, better isolation)
     "services": {
         "builtin": [
-            // === Tier 1: 基础服务（推荐所有部署启用）===
-            "file_manager", // 文件操作（读、写、列表、删除等）
-            "package", // 只读查看可用包
-            // === Tier 2: 常用开发工具 ===
-            "web", // 网页搜索（使用 DDGS）
-            "python_interpreter", // Python 代码执行
-            "shell", // Shell 命令执行（谨慎使用）
-            "knowledge", // 知识库/RAG
-            // === Tier 3: 高级工具（按需启用）===
-            "integrated_notebook" // 集成 Notebook（支持文件操作）
-            // === 更多可用服务（注释，按需启用）===
-            // "file_editor",     // 高级文件编辑（Claude Code 风格）
-            // "jupyter_kernel",  // 标准 Jupyter Kernel
-            // "r_interpreter",   // R 代码执行
-            // "julia_interpreter", // Julia 代码执行
-            // "scraper",         // ScraperAPI 搜索爬取（需要 API Key）
-            // "latex"            // LaTeX 编译为 PDF
+            // === Tier 1: Core Services (recommended for all deployments) ===
+            "file_manager", // File operations (read, write, list, delete, etc.)
+            "package", // Read-only access to available packages
+            // === Tier 2: Common Development Tools ===
+            "web", // Web search (using DDGS)
+            "python_interpreter", // Python code execution
+            "shell", // Shell command execution (use with caution)
+            "knowledge", // Knowledge base/RAG
+            // === Tier 3: Advanced Tools (enable as needed) ===
+            "integrated_notebook" // Integrated Notebook (with file operations)
+            // === More Available Services (commented, enable as needed) ===
+            // "file_editor",     // Advanced file editing (Claude Code style)
+            // "jupyter_kernel",  // Standard Jupyter Kernel
+            // "r_interpreter",   // R code execution
+            // "julia_interpreter", // Julia code execution
+            // "scraper",         // ScraperAPI search/scrape (requires API Key)
+            // "latex"            // LaTeX to PDF compilation
         ],
-        // 服务运行模式配置
-        // "default" 为未明确指定的服务的默认模式
+        // Service mode configuration
+        // "default" is the default mode for services not explicitly specified
         "modes": {
             "default": "local"
-            // "python_interpreter": "local",  // 轻量服务适合 local
-            // "julia_interpreter": "remote"   // 重计算可能需要隔离
+            // "python_interpreter": "local",  // Lightweight services suit local
+            // "julia_interpreter": "remote"   // Heavy computation may need isolation
         }
     },
-    // ===== 远程后端配置 =====
+    // ===== Remote Backend Configuration =====
     "remote": {
-        // 远程后端类型，目前仅支持 "nats"
+        // Remote backend type, currently only "nats" is supported
         "backend": "nats",
-        // NATS 服务器地址列表
+        // NATS server address list
         "nats_servers": [
             "nats://localhost:4222"
         ],
-        // MCP 服务器暴露的主机名（开发环境用 localhost）
+        // MCP server exposed hostname (use localhost for development)
         "server_host": "localhost"
     },
-    // ===== ChatRoom 配置 =====
+    // ===== ChatRoom Configuration =====
     "chatroom": {
-        // 聊天记录存储目录
+        // Chat history storage directory
         "memory_dir": "./.pantheon/memory",
-        // 是否启用 NATS 流式传输（远程服务需要）
+        // Enable NATS streaming (required for remote services)
         "enable_nats_streaming": false,
-        // 语音转文字模型
+        // Speech-to-text model
         "speech_to_text_model": "gpt-4o-mini-transcribe"
     },
-    // ===== REPL 配置 =====
+    // ===== REPL Configuration =====
     "repl": {
-        // 是否禁用日志输出
+        // Disable log output
         "quiet": true,
-        // 默认团队模板路径
+        // Default team template path
         "default_template": null
     },
-    // ===== API Keys 配置 =====
-    // 所有 API Key 都支持环境变量覆盖
-    // 优先级：环境变量 > env_file > settings.json
+    // ===== API Keys Configuration =====
+    // All API keys support environment variable override
+    // Priority: environment variable > env_file > settings.json
     "api_keys": {
         "OPENAI_API_KEY": null,
-        "OPENAI_API_BASE": null, // 自定义 OpenAI endpoint
+        "OPENAI_API_BASE": null, // Custom OpenAI endpoint
         "ANTHROPIC_API_KEY": null,
         "GOOGLE_API_KEY": null,
         "ZAI_API_KEY": null,
-        "SCRAPER_API_KEY": null, // ScraperAPI 密钥
+        "SCRAPER_API_KEY": null, // ScraperAPI key
         "HUGGINGFACE_TOKEN": null
     },
-    // ===== Knowledge/RAG 配置 =====
+    // ===== Knowledge/RAG Configuration =====
     "knowledge": {
-        // 知识库存储路径
+        // Knowledge base storage path
         "storage_path": "~/.pantheon-knowledge",
-        // Qdrant 向量数据库配置
+        // Qdrant vector database configuration
         "qdrant": {
-            "location": null, // 远程 Qdrant URL
-            "path": null, // 本地存储路径
+            "location": null, // Remote Qdrant URL
+            "path": null, // Local storage path
             "api_key": null, // Qdrant Cloud API Key
-            "prefer_grpc": false // 是否优先使用 gRPC
+            "prefer_grpc": false // Whether to prefer gRPC
         }
+    },
+    // ===== ACE (Agentic Context Engineering) Configuration =====
+    // ACE is a long-term memory system that learns from conversation trajectories
+    "ace": {
+        // Enable ACE learning system
+        "enable": true,
+        // LLM model for reflection and skill management
+        // Must support structured output (response_format)
+        "learning_model": "gpt-4o-mini",
+        // Skillbook file path (relative to .pantheon/ace/)
+        "skillbook_path": "skillbook.json",
+        // Learning data directory (relative to .pantheon/ace/)
+        "learning_dir": "learning",
+        // Max skills per section (auto-evicts low-score skills when exceeded)
+        "max_skills_per_section": 30,
+        // Max characters for single skill content
+        "max_content_length": 500,
+        // Delete learning trajectory files after processing
+        // Set to true in production for privacy/disk space
+        "cleanup_after_learning": false,
+        // Enable agent-specific skill scope filtering
+        // If false, all agents see all skills (recommended for simpler setups)
+        "enable_agent_scope": false
     }
 }
