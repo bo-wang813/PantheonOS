@@ -802,7 +802,7 @@ class Repl(ReplUI):
                         self.task_ui_renderer.advance_spinner()
 
                     # Update Prompt App Status Bar with animation state
-                    status_str = f"{'running ' + format_tool_name(self._current_tool_name) + '...' if (self._current_tool_name and self._tools_executing) else 'processing...'}"
+                    status_str = f"{'Running ' + format_tool_name(self._current_tool_name) + '...' if (self._current_tool_name and self._tools_executing) else 'Processing...'}"
                     self.prompt_app.update_processing(
                         status=status_str,
                         output_tokens=current_output_tokens,
@@ -827,10 +827,10 @@ class Repl(ReplUI):
 
                     if self._current_tool_name and self._tools_executing:
                         display_name = format_tool_name(self._current_tool_name)
-                        wave_text = create_wave_text(f"running {display_name}...", wave_offset)
+                        wave_text = create_wave_text(f"Running {display_name}...", wave_offset)
                         status_text = f"[dim]{current_frame}[/dim] {agent_prefix}{wave_text} {token_info}"
                     else:
-                        wave_text = create_wave_text("processing...", wave_offset)
+                        wave_text = create_wave_text("Processing...", wave_offset)
                         status_text = f"[dim]{current_frame}[/dim] {agent_prefix}{wave_text} {token_info}"
     
                     if elapsed > 1:

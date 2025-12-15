@@ -12,6 +12,7 @@ This module provides a prompt_toolkit-based input session with:
 import re
 import sys
 import time
+import shutil
 import asyncio
 
 from pathlib import Path
@@ -383,6 +384,7 @@ class PantheonInputApp:
         # Input Widget (TextArea)
         self.text_area = TextArea(
             multiline=True,
+            wrap_lines=True,  # 启用自动换行
             completer=completer,
             history=FileHistory(history_file),
             auto_suggest=AutoSuggestFromHistory(),
@@ -400,8 +402,8 @@ class PantheonInputApp:
             if not hasattr(self, 'app'):
                 return
 
-            # Calculate current line count (capped at max height)
-            current_lines = min(buffer.text.count('\n') + 1, 10)
+            # Calculate current line count including wrapped lines
+            current_lines = self._calculate_visual_lines(buffer.text)
 
             if current_lines < self._prev_line_count:
                 # Lines decreased - erase and request full redraw
@@ -510,6 +512,37 @@ class PantheonInputApp:
             height=1,
         )
 
+    def _calculate_visual_lines(self, text: str) -> int:
+        """Calculate visual line count including wrapped lines.
+
+        Args:
+            text: Input text content
+
+        Returns:
+            Number of visual lines (accounting for wrap)
+        """
+        if not text:
+            return 1
+
+        # Get terminal width, subtract prompt width ("> " = 2 chars) and some margin
+        try:
+            terminal_width = shutil.get_terminal_size().columns
+        except Exception:
+            terminal_width = 80
+
+        # Available width for text (subtract prompt "> " and margin)
+        available_width = max(20, terminal_width - 4)
+
+        visual_lines = 0
+        for line in text.split('\n'):
+            if not line:
+                visual_lines += 1
+            else:
+                # Calculate how many visual lines this logical line takes
+                visual_lines += max(1, (len(line) + available_width - 1) // available_width)
+
+        return min(visual_lines, 10)  # Cap at max height
+
     def _get_input_container(self):
         """Return input container with top/bottom horizontal lines (no side borders).
 
@@ -517,8 +550,7 @@ class PantheonInputApp:
         prompt_toolkit from allocating excess space on freshly cleared terminals.
         """
         # Calculate exact height needed: content lines + 2 (top/bottom borders)
-        content_lines = max(1, self.text_area.buffer.text.count('\n') + 1)
-        content_lines = min(content_lines, 10)  # Cap at max
+        content_lines = self._calculate_visual_lines(self.text_area.buffer.text)
         total_height = content_lines + 2  # +2 for border lines
 
         return HSplit([
@@ -655,7 +687,7 @@ class PantheonInputApp:
         self._current_elapsed = 0.0
         self._current_spinner = self.SPINNER_FRAMES[0]
         self._wave_offset = 0
-        self._status_text = "processing..."
+        self._status_text = "Processing..."
         self.app.invalidate()
     
     def update_processing(
