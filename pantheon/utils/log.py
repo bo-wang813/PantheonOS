@@ -43,8 +43,9 @@ _logging_disabled = False
 
 # Apply context-aware filter to all handlers
 # Remove default handler and add new one with our filter
+# Use stdout instead of stderr so it works with prompt_toolkit's patch_stdout
 loguru_logger.remove()
-loguru_logger.add(sys.stderr, filter=_context_aware_filter, level="WARNING")
+loguru_logger.add(sys.stdout, filter=_context_aware_filter, level="WARNING")
 
 
 def set_level(level: str):
@@ -53,7 +54,7 @@ def set_level(level: str):
     if _logging_disabled:
         return  # Don't re-enable if disabled
     loguru_logger.remove()
-    loguru_logger.add(sys.stderr, filter=_context_aware_filter, level=level)
+    loguru_logger.add(sys.stdout, filter=_context_aware_filter, level=level)
 
 
 def disable_all():

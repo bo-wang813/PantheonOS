@@ -32,7 +32,7 @@
             "web", // Web search (using DDGS)
             "python_interpreter", // Python code execution
             "shell", // Shell command execution (use with caution)
-            "knowledge", // Knowledge base/RAG
+            // "knowledge", // Knowledge base/RAG
             // === Tier 3: Advanced Tools (enable as needed) ===
             "integrated_notebook" // Integrated Notebook (with file operations)
             // === More Available Services (commented, enable as needed) ===
@@ -41,7 +41,6 @@
             // "r_interpreter",   // R code execution
             // "julia_interpreter", // Julia code execution
             // "scraper",         // ScraperAPI search/scrape (requires API Key)
-            // "latex"            // LaTeX to PDF compilation
         ],
         // Service mode configuration
         // "default" is the default mode for services not explicitly specified

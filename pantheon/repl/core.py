@@ -464,8 +464,8 @@ class Repl(ReplUI):
     async def run(self, message: str | dict | None = None, disable_logging: bool = True):
         """Main REPL loop."""
         if disable_logging:
-            from ..utils.log import disable_all
-            disable_all()
+            from ..utils.log import set_level
+            set_level("ERROR")  # Only show ERROR level, hide DEBUG/INFO/WARNING
 
         # Initialize
         await self._setup()

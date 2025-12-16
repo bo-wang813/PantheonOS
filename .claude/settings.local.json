@@ -10,7 +10,12 @@
       "Bash(python3:*)",
       "Bash(source:*)",
       "Bash(fzf:*)",
-      "Bash(fd:*)"
+      "Bash(fd:*)",
+      "Bash(xargs:*)",
+      "WebFetch(domain:docs.litellm.ai)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(micromamba run -n pantheon python3:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

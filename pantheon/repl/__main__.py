@@ -52,16 +52,17 @@ def start(
         memory_dir: Directory for chat persistence. (default from settings: .pantheon)
         workspace: Workspace directory for Endpoint.
         chat_id: Resume specific chat by ID.
-        log_level: Log level (DEBUG, INFO, WARNING, ERROR). Overrides --quiet.
-        quiet: Disable all logging. Use --no-quiet to enable. (default from settings: True)
+        log_level: Log level (DEBUG, INFO, WARNING, ERROR). Default: ERROR.
+        quiet: Disable all logging. Use --quiet to enable. (default: False)
     """
     # Load settings for defaults (CLI > Settings > code defaults)
     from ..settings import get_settings
     settings = get_settings()
-    
+
     # Apply defaults: CLI > Settings > code defaults
     memory_dir = memory_dir or settings.get("chatroom.memory_dir", str(settings.memory_dir))
-    quiet = quiet if quiet is not None else settings.get("repl.quiet", True)
+    quiet = quiet if quiet is not None else settings.get("repl.quiet", False)
+    log_level = log_level or settings.get("repl.log_level", "ERROR")
     
     asyncio.run(
         _start_async(
@@ -80,8 +81,8 @@ async def _start_async(
     memory_dir: str = None,
     workspace: str = None,
     chat_id: str = None,
-    log_level: str = None,
-    quiet: bool = True,
+    log_level: str = "ERROR",
+    quiet: bool = False,
 ):
     """Async implementation of start."""
     # Ensure memory_dir has a default
