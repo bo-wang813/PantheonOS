@@ -16,7 +16,7 @@ class ModeSemantics:
     # Semantic groups
     PLAN_MODES = frozenset(["PLANNING", "RESEARCH", "DESIGN"])
     EXECUTE_MODES = frozenset(["EXECUTION", "ANALYSIS", "IMPLEMENTATION"])
-    VERIFY_MODES = frozenset(["VERIFICATION", "INTERPRETATION", "TESTING"])
+    VERIFY_MODES = frozenset(["VERIFICATION", "INTERPRETATION", "TESTING", "REVIEW"])
     
     # All known modes
     ALL_KNOWN_MODES = PLAN_MODES | EXECUTE_MODES | VERIFY_MODES
@@ -64,6 +64,7 @@ class ArtifactRoles:
             "walkthrough.md",
             "analysis_log.md",
             "summary.md",
+            "report.md",
         ],
         "tracker": [
             "hypothesis_tracker.md",

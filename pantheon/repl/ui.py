@@ -14,11 +14,21 @@ from .renderers import (
     ToolCallRenderer,
     ToolResultRenderer,
 )
-from .utils import get_separator, format_tool_name, format_relative_time, CLAUDE_BOX, OutputAdapter, get_detailed_token_stats, render_token_panel
+from .utils import (
+    get_separator,
+    format_tool_name,
+    format_relative_time,
+    CLAUDE_BOX,
+    OutputAdapter,
+    get_detailed_token_stats,
+    render_token_panel,
+)
+
 # Simple readline support for history
 try:
     import readline
     import atexit
+
     READLINE_AVAILABLE = True
 except ImportError:
     READLINE_AVAILABLE = False
@@ -30,6 +40,7 @@ from rich_pyfiglet import RichFiglet
 from rich.columns import Columns
 from rich.table import Table
 from rich import box
+
 
 def print_banner(console: Console, text: str = "PANTHEON"):
     """Print ASCII banner with gradient colors"""
@@ -43,31 +54,33 @@ def print_banner(console: Console, text: str = "PANTHEON"):
 
 
 def print_agent_message_modern_style(
-        agent_name: str,
-        message: dict,
-        console: Console | None = None,
-        show_tool_details: bool = False,
-        max_content_length: int | None = 800,
-    ):
+    agent_name: str,
+    message: dict,
+    console: Console | None = None,
+    show_tool_details: bool = False,
+    max_content_length: int | None = 800,
+):
     """Print agent message in modern Claude Code style with minimal visual noise"""
 
     if console is None:
         # Use simple Console if not provided (though verify calling code)
         console = Console()
-        
-    # Use output adapter if console is wrapper, or check context? 
+
+    # Use output adapter if console is wrapper, or check context?
     # Actually print_agent_message_modern_style receives 'console', we assume it's correct.
 
     # Handle tool calls with minimal visual noise
     if tool_calls := message.get("tool_calls"):
         for call in tool_calls:
-            tool_name = call.get('function', {}).get('name')
+            tool_name = call.get("function", {}).get("name")
             if tool_name:
                 console.print(f"[dim]▶ Using {tool_name}[/dim]")
                 if show_tool_details:
-                    args = call.get('function', {}).get('arguments', '')
+                    args = call.get("function", {}).get("arguments", "")
                     if args:
-                        console.print(f"[dim]  {args[:200]}{'...' if len(args) > 200 else ''}[/dim]")
+                        console.print(
+                            f"[dim]  {args[:200]}{'...' if len(args) > 200 else ''}[/dim]"
+                        )
 
     # Handle tool responses with clean formatting
     elif message.get("role") == "tool":
@@ -78,10 +91,14 @@ def print_agent_message_modern_style(
         # Try to format nicely based on content type
         try:
             import json
+
             parsed = json.loads(content)
             from rich.syntax import Syntax
+
             formatted = json.dumps(parsed, indent=2)
-            console.print(Syntax(formatted, "json", theme="monokai", line_numbers=False))
+            console.print(
+                Syntax(formatted, "json", theme="monokai", line_numbers=False)
+            )
         except:
             console.print(f"[dim]{content}[/dim]")
 
@@ -95,13 +112,17 @@ def print_agent_message_modern_style(
 
 class ReplUI:
     """Presentation layer for REPL: printing, input, formatting."""
+
     def __init__(self):
         # Output adapter for patch_stdout compatibility
         self._output = OutputAdapter()
         self.console = self._output._default_console
-        
-        self.input_panel = Panel(Text("Type your message here...", style="dim"),
-                                 title="Input", border_style="bright_blue")
+
+        self.input_panel = Panel(
+            Text("Type your message here...", style="dim"),
+            title="Input",
+            border_style="bright_blue",
+        )
         self._tools_executing = False
         self._processing_live: Live | None = None
         self._current_tool_name = None
@@ -110,7 +131,7 @@ class ReplUI:
         self._current_agent_name: str | None = None
         self._last_printed_agent: str | None = None
         self._is_multi_agent: bool = False
-        
+
         # Stats
         self.message_count = 0
         self.total_input_tokens = 0
@@ -129,8 +150,12 @@ class ReplUI:
 
     def _init_renderers(self):
         """Initialize or reinitialize renderers with current console."""
-        self.tool_call_renderer = ToolCallRenderer(self.output.console, self.display_config)
-        self.tool_result_renderer = ToolResultRenderer(self.output.console, self.display_config)
+        self.tool_call_renderer = ToolCallRenderer(
+            self.output.console, self.display_config
+        )
+        self.tool_result_renderer = ToolResultRenderer(
+            self.output.console, self.display_config
+        )
 
     def set_display_mode(self, mode: DisplayMode):
         """Set display mode (compact/verbose)"""
@@ -165,7 +190,7 @@ class ReplUI:
             return True
 
         # Check for multi-line commands or chained commands
-        if '\n' in command or '&&' in command or '||' in command or ';' in command:
+        if "\n" in command or "&&" in command or "||" in command or ";" in command:
             return True
 
         return False
@@ -179,26 +204,26 @@ class ReplUI:
             return "Run bash command"
 
         # Extract the actual command name (remove path if present)
-        first_command = command_parts[0].split('/')[-1]
+        first_command = command_parts[0].split("/")[-1]
 
         # Check for pipeline-style commands
-        if any(connector in command for connector in ['&&', '||', ';', '|']):
+        if any(connector in command for connector in ["&&", "||", ";", "|"]):
             return "Run pipeline"
 
         # Check for common patterns
-        if first_command in ['wget', 'curl']:
+        if first_command in ["wget", "curl"]:
             return "Download files"
-        elif first_command in ['gunzip', 'tar', 'unzip']:
+        elif first_command in ["gunzip", "tar", "unzip"]:
             return "Extract files"
-        elif first_command in ['mkdir', 'cp', 'mv', 'rm', 'ln']:
+        elif first_command in ["mkdir", "cp", "mv", "rm", "ln"]:
             return "File operations"
-        elif first_command in ['grep', 'awk', 'sed', 'sort', 'uniq', 'cut', 'wc']:
+        elif first_command in ["grep", "awk", "sed", "sort", "uniq", "cut", "wc"]:
             return "Text processing"
-        elif first_command in ['git']:
+        elif first_command in ["git"]:
             return "Git operation"
-        elif first_command in ['docker', 'docker-compose']:
+        elif first_command in ["docker", "docker-compose"]:
             return "Docker operation"
-        elif first_command in ['pip', 'pip3', 'conda', 'npm', 'yarn']:
+        elif first_command in ["pip", "pip3", "conda", "npm", "yarn"]:
             return "Package management"
 
         return "Run bash command"
@@ -206,8 +231,8 @@ class ReplUI:
     def _wrap_bash_command(self, command: str, max_width: int = 71) -> List[str]:
         """Wrap a bash command for display, breaking at appropriate points"""
         # If command already has newlines, split by those first
-        if '\n' in command:
-            lines = command.split('\n')
+        if "\n" in command:
+            lines = command.split("\n")
         else:
             lines = [command]
 
@@ -234,13 +259,17 @@ class ReplUI:
                 # Look for good break points in priority order
                 # 1. Before a flag (space followed by -)
                 for i in range(max_width - 1, max(0, max_width - 20), -1):
-                    if i < len(remaining) - 1 and remaining[i] == ' ' and remaining[i + 1] == '-':
+                    if (
+                        i < len(remaining) - 1
+                        and remaining[i] == " "
+                        and remaining[i + 1] == "-"
+                    ):
                         break_point = i + 1
                         break
 
                 # 2. Before pipes, redirects, or logical operators
                 if break_point == max_width:
-                    for pattern in [' | ', ' > ', ' >> ', ' && ', ' || ', ' ; ']:
+                    for pattern in [" | ", " > ", " >> ", " && ", " || ", " ; "]:
                         idx = remaining[:max_width].rfind(pattern)
                         if idx > 0:
                             break_point = idx + 1
@@ -248,7 +277,7 @@ class ReplUI:
 
                 # 3. At any space
                 if break_point == max_width:
-                    space_idx = remaining[:max_width].rfind(' ')
+                    space_idx = remaining[:max_width].rfind(" ")
                     if space_idx > 0:
                         break_point = space_idx + 1
 
@@ -257,7 +286,7 @@ class ReplUI:
                 remaining = remaining[break_point:].lstrip()
 
                 # Add continuation indicator for wrapped lines (except last)
-                if remaining and not wrapped_lines[-1].endswith('\\'):
+                if remaining and not wrapped_lines[-1].endswith("\\"):
                     wrapped_lines[-1] = wrapped_lines[-1]
 
         return wrapped_lines
@@ -282,31 +311,33 @@ class ReplUI:
         # Print separator line
         line_width = 60
         padding = line_width - len(title) - 3
-        self.console.print(f"\n[bold cyan]┌ {title} {'─' * max(padding, 3)}[/bold cyan]")
+        self.console.print(
+            f"\n[bold cyan]┌ {title} {'─' * max(padding, 3)}[/bold cyan]"
+        )
 
     def print_info_box(self, recent_chats=None):
         """Print info box with 4 regions (Team, Session, Tokens, Help) in a 2x2 grid."""
-        
+
         # 1. Team Info - Detailed Agent List
-        team = getattr(self, '_team', None) or getattr(self, 'team', None)
+        team = getattr(self, "_team", None) or getattr(self, "team", None)
         team_lines = ["[bold]Team[/bold]"]
         if team and team.agents:
             # Show up to 5 agents to prevent box from getting too tall
             for idx, agent in enumerate(list(team.agents.values())[:5]):
-                model = getattr(agent, 'model', 'unknown')
-                if hasattr(agent, 'models'):
-                     models = agent.models
-                     if isinstance(models, list) and models:
-                         model = models[0]
-                     elif isinstance(models, str):
-                         model = models
-                
+                model = getattr(agent, "model", "unknown")
+                if hasattr(agent, "models"):
+                    models = agent.models
+                    if isinstance(models, list) and models:
+                        model = models[0]
+                    elif isinstance(models, str):
+                        model = models
+
                 # Truncate model for display
                 if len(model) > 20:
                     model = model[:17] + "..."
-                
+
                 team_lines.append(f"[dim]• {agent.name}[/dim] [dim italic]({model})[/]")
-            
+
             if len(team.agents) > 5:
                 team_lines.append(f"[dim]+ {len(team.agents) - 5} more...[/dim]")
         else:
@@ -321,28 +352,34 @@ class ReplUI:
                 name = chat.get("name", "Unnamed")
                 if len(name) > 20:
                     name = name[:17] + "..."
-                
+
                 # Simple relative time
                 last_activity = chat.get("last_activity_date")
                 time_str = format_relative_time(last_activity)
-                
-                marker = "→" if chat.get("id") == self._chat_id else " " # _chat_id is on Repl, accessed via self if Repl inherits
-                
-                session_lines.append(f"[dim]{marker} {name}[/dim] [dim italic]({time_str})[/]")
+
+                marker = (
+                    "→" if chat.get("id") == self._chat_id else " "
+                )  # _chat_id is on Repl, accessed via self if Repl inherits
+
+                session_lines.append(
+                    f"[dim]{marker} {name}[/dim] [dim italic]({time_str})[/]"
+                )
         else:
-            msg_count = getattr(self, 'message_count', 0)
+            msg_count = getattr(self, "message_count", 0)
             session_duration = datetime.now() - self.session_start
             duration_mins = int(session_duration.total_seconds() / 60)
-            session_lines.append(f"[dim]Current: {duration_mins}m, {msg_count} msgs[/dim]")
+            session_lines.append(
+                f"[dim]Current: {duration_mins}m, {msg_count} msgs[/dim]"
+            )
             session_lines.append("[dim]No history loaded[/dim]")
-        
+
         session_text = "\n".join(session_lines)
 
         # 3. Quick Start - Commands and shortcuts (merged row)
         quick_start_text = (
             "[bold]Quick Start[/bold]\n"
             "[dim]/help[/dim] commands   [dim]/agents[/dim] team   [dim]/exit[/dim] quit\n"
-            "[dim]@path[/dim] file ref   [dim]@image:path[/dim] attach image\n"
+            "[dim]@path[/dim] file     [dim]@image:path[/dim] image   [dim]Ctrl+T[/dim] verbose\n"
             "[dim]Esc[/dim] cancel   [dim]Ctrl+D[/dim] exit   [dim]Alt+Enter[/dim] newline"
         )
 
@@ -365,7 +402,7 @@ class ReplUI:
         table.add_row(team_text, session_text)
         # Row 2: Quick Start (spans visually by leaving right cell empty)
         table.add_row(quick_start_text, "")
-        
+
         self.console.print(table)
 
     async def print_greeting(self):
@@ -382,7 +419,7 @@ class ReplUI:
 
         # Fetch recent chats if available (via Repl mixin)
         recent_chats = []
-        chatroom = getattr(self, '_chatroom', None)
+        chatroom = getattr(self, "_chatroom", None)
         if chatroom:
             try:
                 result = await chatroom.list_chats()
@@ -393,7 +430,7 @@ class ReplUI:
 
         # Print modern Info Box
         self.print_info_box(recent_chats=recent_chats)
-        
+
         self.console.print()
         if READLINE_AVAILABLE:
             self.console.print("[dim]Use ↑/↓ arrows for command history[/dim]")
@@ -403,7 +440,9 @@ class ReplUI:
     def ask_user_input(self) -> str:
         """Get user input with multi-line support and readline history."""
         try:
-            self.console.print("[dim]Enter your message (press Enter twice to finish)[/dim]")
+            self.console.print(
+                "[dim]Enter your message (press Enter twice to finish)[/dim]"
+            )
             lines = []
             while True:
                 # First input uses "> " prompt, subsequent lines use "... "
@@ -412,7 +451,9 @@ class ReplUI:
                 if READLINE_AVAILABLE:
                     line = input(prompt_text)
                 else:
-                    self.console.print(f"[bright_blue]{prompt_text}[/bright_blue]", end=" ")
+                    self.console.print(
+                        f"[bright_blue]{prompt_text}[/bright_blue]", end=" "
+                    )
                     line = input()
 
                 # 空行结束
@@ -432,95 +473,148 @@ class ReplUI:
 
     def _print_help(self):
         """Print available commands"""
-        self.console.print("[dim][bold blue]-- BASIC ------------------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- BASIC ------------------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
-        self.console.print("[dim][bold purple]/help    [/bold purple][/dim] - Show this help")
-        self.console.print("[dim][bold purple]/status  [/bold purple][/dim] - Session info")
-        self.console.print("[dim][bold purple]/history [/bold purple][/dim] - Show command history")
-        self.console.print("[dim][bold purple]/tokens  [/bold purple][/dim] - Token usage analysis")
-        self.console.print("[dim][bold purple]/save    [/bold purple][/dim] - Save conversation to (json) file")
-        self.console.print("[dim][bold purple]/clear   [/bold purple][/dim] - Clear screen")
-        self.console.print("[dim][bold purple]!<cmd>   [/bold purple][/dim] - Execute bash command directly (no LLM)")
-        self.console.print("[dim][bold purple]/exit    [/bold purple][/dim] - Exit cleanly")
+        self.console.print(
+            "[dim][bold purple]/help    [/bold purple][/dim] - Show this help"
+        )
+        self.console.print(
+            "[dim][bold purple]/status  [/bold purple][/dim] - Session info"
+        )
+        self.console.print(
+            "[dim][bold purple]/history [/bold purple][/dim] - Show command history"
+        )
+        self.console.print(
+            "[dim][bold purple]/tokens  [/bold purple][/dim] - Token usage analysis"
+        )
+        self.console.print(
+            "[dim][bold purple]/save    [/bold purple][/dim] - Save conversation to (json) file"
+        )
+        self.console.print(
+            "[dim][bold purple]/clear   [/bold purple][/dim] - Clear screen"
+        )
+        self.console.print(
+            "[dim][bold purple]!<cmd>   [/bold purple][/dim] - Execute bash command directly (no LLM)"
+        )
+        self.console.print(
+            "[dim][bold purple]/exit    [/bold purple][/dim] - Exit cleanly"
+        )
         self.console.print()
 
-        self.console.print("[dim][bold blue]-- SHORTCUTS --------------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- SHORTCUTS --------------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
         self.console.print("[dim]Esc      [/dim] - Cancel operation / clear input")
         self.console.print("[dim]Ctrl+C   [/dim] - Cancel, press twice to exit")
         self.console.print("[dim]Ctrl+D   [/dim] - Exit immediately")
-        self.console.print("[dim]Ctrl+T   [/dim] - Toggle display mode (compact/verbose)")
+        self.console.print(
+            "[dim]Ctrl+T   [/dim] - Toggle display mode (compact/verbose)"
+        )
         self.console.print("[dim]Alt+Enter[/dim] - Insert newline (multiline input)")
         self.console.print("[dim]Ctrl+J   [/dim] - Insert newline (alternative)")
         self.console.print()
 
-        self.console.print("[dim][bold blue]-- CHAT MANAGEMENT --------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- CHAT MANAGEMENT --------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
-        self.console.print("[dim][bold purple]/new     [/bold purple][/dim] - Create new chat session")
-        self.console.print("[dim][bold purple]/list    [/bold purple][/dim] - List all chat sessions")
-        self.console.print("[dim][bold purple]/switch  [/bold purple][/dim] - Switch to another chat (by id or name)")
+        self.console.print(
+            "[dim][bold purple]/new     [/bold purple][/dim] - Create new chat session"
+        )
+        self.console.print(
+            "[dim][bold purple]/list    [/bold purple][/dim] - List all chat sessions"
+        )
+        self.console.print(
+            "[dim][bold purple]/switch  [/bold purple][/dim] - Switch to another chat (by id or name)"
+        )
         self.console.print()
 
-        self.console.print("[dim][bold blue]-- AGENT MANAGEMENT -------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- AGENT MANAGEMENT -------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
-        self.console.print("[dim][bold purple]/agents  [/bold purple][/dim] - Show agents in current team")
-        self.console.print("[dim][bold purple]/agent   [/bold purple][/dim] - Switch to agent (by name or number)")
-        self.console.print("[dim][bold purple]/team    [/bold purple][/dim] - Switch team: /team list | /team <id>")
+        self.console.print(
+            "[dim][bold purple]/agents  [/bold purple][/dim] - Show agents in current team"
+        )
+        self.console.print(
+            "[dim][bold purple]/agent   [/bold purple][/dim] - Switch to agent (by name or number)"
+        )
+        self.console.print(
+            "[dim][bold purple]/team    [/bold purple][/dim] - Switch team: /team list | /team <id>"
+        )
         self.console.print()
 
-        self.console.print("[dim][bold blue]-- DISPLAY ----------------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- DISPLAY ----------------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
-        self.console.print("[dim][bold purple]/verbose [/bold purple][/dim] - Show all details (code, files, output)")
-        self.console.print("[dim][bold purple]/compact [/bold purple][/dim] - Truncated output (default)")
+        self.console.print(
+            "[dim][bold purple]/verbose [/bold purple][/dim] - Show all details (code, files, output)"
+        )
+        self.console.print(
+            "[dim][bold purple]/compact [/bold purple][/dim] - Truncated output (default)"
+        )
         self.console.print()
 
         if READLINE_AVAILABLE:
-            self.console.print("[dim][bold blue]-- NAVIGATION -------------------------------------------------------[/bold blue][/dim]")
+            self.console.print(
+                "[dim][bold blue]-- NAVIGATION -------------------------------------------------------[/bold blue][/dim]"
+            )
             self.console.print()
-            self.console.print("[dim][bold purple]↑/↓[/bold purple] - Browse command history")
+            self.console.print(
+                "[dim][bold purple]↑/↓[/bold purple] - Browse command history"
+            )
         self.console.print()
-
 
     def _print_history(self):
         """Print recent command history"""
         self.console.print()
-        self.console.print("[dim][bold blue]-- HISTORY ---------------------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- HISTORY ---------------------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
         if not self.command_history:
             self.console.print("[dim]No command history yet[/dim]\n")
             return
 
-        self.console.print(f"[bold purple]Command History[/bold purple] [dim]({len(self.command_history)} commands)[/dim]")
+        self.console.print(
+            f"[bold purple]Command History[/bold purple] [dim]({len(self.command_history)} commands)[/dim]"
+        )
 
         # Show last 10 commands
         recent = self.command_history[-10:]
         for i, cmd in enumerate(recent, 1):
             if len(recent) == 10 and i == 1 and len(self.command_history) > 10:
                 self.console.print("[dim]...[/dim]")
-            self.console.print(f"[dim]{len(self.command_history) - len(recent) + i:2d}.[/dim] {cmd}")
+            self.console.print(
+                f"[dim]{len(self.command_history) - len(recent) + i:2d}.[/dim] {cmd}"
+            )
         self.console.print()
 
     async def _print_token_analysis(self):
         """Print detailed token usage analysis with Claude Code-style UI."""
         # Gather data from chatroom/team
-        chatroom = getattr(self, '_chatroom', None)
-        chat_id = getattr(self, '_chat_id', None)
-        team = getattr(self, '_team', None) or getattr(self, 'team', None)
-        
+        chatroom = getattr(self, "_chatroom", None)
+        chat_id = getattr(self, "_chat_id", None)
+        team = getattr(self, "_team", None) or getattr(self, "team", None)
+
         # Fallback stats from local tracking
         fallback_stats = {
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
             "message_count": self.message_count,
         }
-        
+
         # Get token stats using utility
-        token_info = await get_detailed_token_stats(chatroom, chat_id, team, fallback_stats)
-        
+        token_info = await get_detailed_token_stats(
+            chatroom, chat_id, team, fallback_stats
+        )
+
         # Render the panel
         render_token_panel(self.output.console, token_info, self.session_start)
-
-
 
     def _print_status(self):
         """Print current session status"""
@@ -528,19 +622,23 @@ class ReplUI:
         duration_mins = int(session_duration.total_seconds() / 60)
 
         self.console.print()
-        self.console.print("[dim][bold blue]-- STATUS -----------------------------------------------------------[/bold blue][/dim]")
+        self.console.print(
+            "[dim][bold blue]-- STATUS -----------------------------------------------------------[/bold blue][/dim]"
+        )
         self.console.print()
 
         # Display agent/team info
-        team = getattr(self, '_team', None) or getattr(self, 'team', None)
+        team = getattr(self, "_team", None) or getattr(self, "team", None)
         if team and len(team.agents) == 1:
             agent = list(team.agents.values())[0]
             self.console.print(f"[dim]• Agent:    [/dim] {agent.name}")
-            if hasattr(agent, 'models') and agent.models:
-                model = agent.models[0] if isinstance(agent.models, list) else agent.models
+            if hasattr(agent, "models") and agent.models:
+                model = (
+                    agent.models[0] if isinstance(agent.models, list) else agent.models
+                )
                 self.console.print(f"[dim]• Model:    [/dim] {model}")
         elif team:
-            memory = getattr(self, 'memory', None)
+            memory = getattr(self, "memory", None)
             if memory:
                 active = team.get_active_agent(memory)
                 self.console.print(f"[dim]• Team:     [/dim] {len(team.agents)} agents")
@@ -550,22 +648,34 @@ class ReplUI:
 
         self.console.print(f"[dim]• Messages: [/dim] {self.message_count}")
         self.console.print(f"[dim]• Duration: [/dim] {duration_mins}m")
-        self.console.print(f"[dim]• History:  [/dim] {len(self.command_history)} commands")
+        self.console.print(
+            f"[dim]• History:  [/dim] {len(self.command_history)} commands"
+        )
         self.console.print()
 
         # Token usage statistics
         total_tokens = self.total_input_tokens + self.total_output_tokens
         if total_tokens > 0:
-            self.console.print("[dim][bold blue]-- TOKENS -----------------------------------------------------------[/bold blue][/dim]")
+            self.console.print(
+                "[dim][bold blue]-- TOKENS -----------------------------------------------------------[/bold blue][/dim]"
+            )
             self.console.print()
-            self.console.print(f"[dim]  • Total:  [/dim] {self._format_token_count(total_tokens)}")
-            self.console.print(f"[dim]  • Input:  [/dim] {self._format_token_count(self.total_input_tokens)}")
-            self.console.print(f"[dim]  • Output: [/dim] {self._format_token_count(self.total_output_tokens)}")
+            self.console.print(
+                f"[dim]  • Total:  [/dim] {self._format_token_count(total_tokens)}"
+            )
+            self.console.print(
+                f"[dim]  • Input:  [/dim] {self._format_token_count(self.total_input_tokens)}"
+            )
+            self.console.print(
+                f"[dim]  • Output: [/dim] {self._format_token_count(self.total_output_tokens)}"
+            )
 
             # Show efficiency metrics
             if self.message_count > 0:
                 avg_tokens_per_msg = total_tokens / self.message_count
-                self.console.print(f"[dim]  • Avg/msg:[/dim] {self._format_token_count(int(avg_tokens_per_msg))}")
+                self.console.print(
+                    f"[dim]  • Avg/msg:[/dim] {self._format_token_count(int(avg_tokens_per_msg))}"
+                )
             self.console.print()
 
         if READLINE_AVAILABLE:
@@ -581,9 +691,9 @@ class ReplUI:
 
         if self.message_count > 0:
             # Get accurate token stats from chatroom (same source as status bar)
-            chatroom = getattr(self, '_chatroom', None)
-            chat_id = getattr(self, '_chat_id', None)
-            team = getattr(self, '_team', None)
+            chatroom = getattr(self, "_chatroom", None)
+            chat_id = getattr(self, "_chat_id", None)
+            team = getattr(self, "_team", None)
 
             token_info = await get_detailed_token_stats(chatroom, chat_id, team, {})
             total_tokens = token_info.get("total", 0)
@@ -646,7 +756,11 @@ class ReplUI:
                     formatted_lines.append(stderr)
                     formatted_lines.append("```")
 
-                return "\n".join(formatted_lines) if formatted_lines else "```\n{}\n```".format(str(output))
+                return (
+                    "\n".join(formatted_lines)
+                    if formatted_lines
+                    else "```\n{}\n```".format(str(output))
+                )
 
             # Special handling for todo outputs
             elif "success" in output and "summary" in output:
@@ -657,17 +771,31 @@ class ReplUI:
 
                     formatted_lines.append(f"✅ **Todo Status:** {total} total tasks")
                     if summary:
-                        formatted_lines.append(f"- Pending: {summary.get('pending', 0)}")
-                        formatted_lines.append(f"- In Progress: {summary.get('in_progress', 0)}")
-                        formatted_lines.append(f"- Completed: {summary.get('completed', 0)}")
+                        formatted_lines.append(
+                            f"- Pending: {summary.get('pending', 0)}"
+                        )
+                        formatted_lines.append(
+                            f"- In Progress: {summary.get('in_progress', 0)}"
+                        )
+                        formatted_lines.append(
+                            f"- Completed: {summary.get('completed', 0)}"
+                        )
 
                     # Add todos list if present
                     if "todos" in output and output["todos"]:
                         formatted_lines.append("")
                         formatted_lines.append("**Tasks:**")
                         for todo in output["todos"]:
-                            status_icon = "✅" if todo.get("status") == "completed" else "🔄" if todo.get("status") == "in_progress" else "⏳"
-                            formatted_lines.append(f"- {status_icon} {todo.get('content', 'Unknown task')}")
+                            status_icon = (
+                                "✅"
+                                if todo.get("status") == "completed"
+                                else "🔄"
+                                if todo.get("status") == "in_progress"
+                                else "⏳"
+                            )
+                            formatted_lines.append(
+                                f"- {status_icon} {todo.get('content', 'Unknown task')}"
+                            )
 
                     return "\n".join(formatted_lines)
 
@@ -730,10 +858,19 @@ class ReplUI:
     def _print_tool_result_fallback(self, tool_name: str, result: dict):
         """Fallback result rendering for unhandled tools"""
         # Skip tools that handle their own output
-        skip_tools = ['edit', 'notebook', 'update_todo_status',
-                     'add_todo', 'mark_task_done', 'complete_current_todo', 'work_on_next_todo']
-        if any(tool in tool_name.lower() for tool in skip_tools) and isinstance(result, dict):
-            if result.get('success'):
+        skip_tools = [
+            "edit",
+            "notebook",
+            "update_todo_status",
+            "add_todo",
+            "mark_task_done",
+            "complete_current_todo",
+            "work_on_next_todo",
+        ]
+        if any(tool in tool_name.lower() for tool in skip_tools) and isinstance(
+            result, dict
+        ):
+            if result.get("success"):
                 return
 
         if not isinstance(result, dict):
@@ -840,7 +977,11 @@ class ReplUI:
 
                 # Unpack Team event format: {"agent_name": ..., "event": ...}
                 agent_name = None
-                if isinstance(raw_message, dict) and "agent_name" in raw_message and "event" in raw_message:
+                if (
+                    isinstance(raw_message, dict)
+                    and "agent_name" in raw_message
+                    and "event" in raw_message
+                ):
                     agent_name = raw_message["agent_name"]
                     message = raw_message["event"]
                 else:
@@ -856,15 +997,21 @@ class ReplUI:
                     # Estimate tokens for tool calls message
                     tool_call_content = json.dumps(tool_calls)
                     # Update token estimate if we have access to the parent REPL instance
-                    if hasattr(self, '_parent_repl') and hasattr(self._parent_repl, 'estimated_output_tokens'):
-                        additional_tokens = self._parent_repl._estimate_tokens(tool_call_content)
+                    if hasattr(self, "_parent_repl") and hasattr(
+                        self._parent_repl, "estimated_output_tokens"
+                    ):
+                        additional_tokens = self._parent_repl._estimate_tokens(
+                            tool_call_content
+                        )
                         self._parent_repl.estimated_output_tokens += additional_tokens
 
                     for call in tool_calls:
-                        tool_name = call.get('function', {}).get('name')
+                        tool_name = call.get("function", {}).get("name")
                         if tool_name:
                             try:
-                                args = json.loads(call.get('function', {}).get('arguments', '{}'))
+                                args = json.loads(
+                                    call.get("function", {}).get("arguments", "{}")
+                                )
                             except Exception:
                                 args = {}
                             self.print_tool_call(tool_name, args)
@@ -890,11 +1037,14 @@ class ReplUI:
                         # Try ast.literal_eval for repr() output (uses single quotes)
                         try:
                             import ast
+
                             result = ast.literal_eval(content)
                             if isinstance(result, dict):
                                 self.print_tool_result(tool_name, result)
                             else:
-                                self.print_tool_result(tool_name, {"output": str(result)})
+                                self.print_tool_result(
+                                    tool_name, {"output": str(result)}
+                                )
                         except Exception:
                             # Final fallback: plain text
                             if content.strip():
@@ -909,13 +1059,15 @@ class ReplUI:
                     continue
 
                 # Only print other message types (like system messages, if any)
-                team = getattr(self, '_team', None) or getattr(self, 'team', None)
-                default_name = list(team.agents.keys())[0] if team and team.agents else "agent"
+                team = getattr(self, "_team", None) or getattr(self, "team", None)
+                default_name = (
+                    list(team.agents.keys())[0] if team and team.agents else "agent"
+                )
                 print_agent_message_modern_style(
                     agent_name or default_name,
                     message,
                     self.console,
-                    show_tool_details=False
+                    show_tool_details=False,
                 )
         except Exception:
             # Silently handle critical errors in print_message

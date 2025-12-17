@@ -4,6 +4,8 @@ id: researcher
 name: Web Researcher
 toolsets:
 - web
+- file_manager
+- python_interpreter
 description: Conducts rigorous research, collects sources, and synthesizes evidence-based findings.
 ---
 
@@ -28,4 +30,3 @@ BEST PRACTICES:
 
 {{output_format}}
 
-{{work_tracking}}

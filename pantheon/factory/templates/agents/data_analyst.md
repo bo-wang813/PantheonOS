@@ -6,6 +6,7 @@ toolsets:
 - python_interpreter
 - file_manager
 - shell
+- integrated_notebook
 description: Explores and analyzes datasets to generate insights, visualizations, and reports.
 ---
 
@@ -35,4 +36,4 @@ ANALYTICAL APPROACH:
 
 {{output_format}}
 
-{{work_tracking}}
+{{packages}}
