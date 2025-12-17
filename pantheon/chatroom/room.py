@@ -551,6 +551,8 @@ class ChatRoom(ToolSet):
                 "toolsets": [],
                 "icon": agent.icon,
                 "not_loaded_toolsets": not_loaded_toolsets,
+                "model": agent.models[0] if agent.models else None,
+                "models": agent.models,
             }
 
         logger.debug(f"get agents {chat_id}")
@@ -1137,3 +1139,150 @@ class ChatRoom(ToolSet):
         """
         template_manager = get_template_manager()
         return template_manager.delete_template_file(file_path)
+
+    # Model Management Methods
+
+    @tool
+    async def list_available_models(self) -> dict:
+        """List all available models based on configured API keys.
+
+        Returns models grouped by provider. Only providers with valid API keys
+        are included.
+
+        Returns:
+            {
+                "success": True,
+                "available_providers": ["openai", "anthropic"],
+                "current_provider": "openai",
+                "models_by_provider": {
+                    "openai": ["openai/gpt-5.2", "openai/gpt-5.1", ...],
+                    "anthropic": ["anthropic/claude-opus-4-5-20251101", ...]
+                },
+                "supported_tags": ["high", "normal", "low", "vision", ...]
+            }
+        """
+        try:
+            from pantheon.utils.model_selector import get_model_selector
+
+            selector = get_model_selector()
+            return selector.list_available_models()
+        except Exception as e:
+            logger.error(f"Error listing available models: {e}")
+            return {"success": False, "message": str(e)}
+
+    @tool
+    async def set_agent_model(
+        self,
+        chat_id: str,
+        agent_name: str,
+        model: str,
+        validate: bool = True,
+    ) -> dict:
+        """Set the model for an agent in a specific chat.
+
+        Args:
+            chat_id: The chat ID.
+            agent_name: The name of the agent to update.
+            model: Model name (e.g., "openai/gpt-4o") or tag (e.g., "high", "normal,vision").
+            validate: If True, verify that the provider has a valid API key.
+
+        Returns:
+            {
+                "success": True,
+                "agent": "assistant",
+                "model": "high",
+                "resolved_models": ["openai/gpt-5.2", "openai/gpt-5.1", ...]
+            }
+        """
+        try:
+            from pantheon.agent import _is_model_tag, _resolve_model_tag
+            from pantheon.utils.model_selector import get_model_selector
+
+            # 1. Get team and find target agent
+            team = await self.get_team_for_chat(chat_id)
+            target_agent = next(
+                (a for a in team.team_agents if a.name == agent_name),
+                None,
+            )
+            if target_agent is None:
+                return {
+                    "success": False,
+                    "message": f"Agent '{agent_name}' not found in chat '{chat_id}'",
+                }
+
+            # 2. Validate provider if requested
+            if validate:
+                is_valid, error_msg = self._validate_model_provider(model)
+                if not is_valid:
+                    return {"success": False, "message": error_msg}
+
+            # 3. Resolve model to list
+            if _is_model_tag(model):
+                resolved_models = _resolve_model_tag(model)
+            else:
+                resolved_models = [model]
+
+            # 4. Update runtime agent
+            target_agent.models = resolved_models
+
+            # 5. Persist to memory template
+            memory = await run_func(self.memory_manager.get_memory, chat_id)
+            team_template = memory.extra_data.get("team_template", {})
+
+            # Update the agent's model in template
+            for agent_config in team_template.get("agents", []):
+                if agent_config.get("name") == agent_name:
+                    agent_config["model"] = model  # Store original input (tag or model name)
+                    break
+
+            memory.extra_data["team_template"] = team_template
+            await run_func(self.memory_manager.save)
+
+            logger.info(
+                f"Set model for agent '{agent_name}' in chat '{chat_id}': {model} -> {resolved_models}"
+            )
+
+            return {
+                "success": True,
+                "agent": agent_name,
+                "model": model,
+                "resolved_models": resolved_models,
+            }
+
+        except Exception as e:
+            logger.error(f"Error setting agent model: {e}")
+            return {"success": False, "message": str(e)}
+
+    def _validate_model_provider(self, model: str) -> tuple[bool, str]:
+        """Validate that the provider for a model has a valid API key.
+
+        Args:
+            model: Model name or tag.
+
+        Returns:
+            (is_valid, error_message)
+        """
+        from pantheon.agent import _is_model_tag
+        from pantheon.utils.model_selector import get_model_selector
+
+        # Tags are always valid (they resolve based on available providers)
+        if _is_model_tag(model):
+            return True, ""
+
+        selector = get_model_selector()
+        available = selector._get_available_providers()
+
+        # Extract provider from model name
+        if "/" in model:
+            provider = model.split("/")[0]
+            # Handle provider aliases
+            provider_aliases = {
+                "gemini": "google",
+                "vertex_ai": "google",
+            }
+            provider = provider_aliases.get(provider, provider)
+
+            if provider not in available:
+                return False, f"Provider '{provider}' not available (missing API key)"
+
+        return True, ""

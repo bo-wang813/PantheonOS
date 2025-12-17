@@ -434,6 +434,54 @@ class ModelSelector:
             ),
         }
 
+    def list_available_models(self) -> dict:
+        """List all available models grouped by provider.
+
+        Returns models from providers that have valid API keys configured.
+
+        Returns:
+            {
+                "success": True,
+                "available_providers": ["openai", "anthropic"],
+                "current_provider": "openai",
+                "models_by_provider": {
+                    "openai": ["openai/gpt-5.2", "openai/gpt-5.1", ...],
+                    "anthropic": ["anthropic/claude-opus-4-5-20251101", ...]
+                },
+                "supported_tags": ["high", "normal", "low", "vision", ...]
+            }
+        """
+        available_providers = list(self._get_available_providers())
+        current_provider = self._detected_provider or self.detect_available_provider()
+
+        # Collect models for each available provider
+        models_by_provider: dict[str, list[str]] = {}
+        for provider in available_providers:
+            provider_config = self._get_provider_models(provider)
+            # Merge all quality levels and deduplicate while preserving order
+            all_models: list[str] = []
+            seen: set[str] = set()
+            for quality in ["high", "normal", "low"]:
+                models = provider_config.get(quality, [])
+                if isinstance(models, str):
+                    models = [models]
+                for model in models:
+                    if model not in seen:
+                        all_models.append(model)
+                        seen.add(model)
+            models_by_provider[provider] = all_models
+
+        # Collect supported tags
+        supported_tags = list(QUALITY_TAGS) + list(CAPABILITY_MAP.keys())
+
+        return {
+            "success": True,
+            "available_providers": available_providers,
+            "current_provider": current_provider,
+            "models_by_provider": models_by_provider,
+            "supported_tags": supported_tags,
+        }
+
 
 # ============ Module-level Helpers ============
 
