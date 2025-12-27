@@ -622,6 +622,18 @@ class JupyterKernelToolSet(ToolSet):
             if self.event_bus:
                 await self._setup_iopub_monitoring(kernel_session_id, km, kc)
 
+            # Execute context prefix code once during kernel initialization
+            # This sets up PANTHEON_CONTEXT environment variable in the kernel
+            # Moved here from execute_request to avoid conflicts with magic commands (%%R, etc.)
+            if context_prefix := self._context_prefix_code():
+                await self.execute_request(
+                    context_prefix,
+                    kernel_session_id,
+                    silent=True,
+                    store_history=False,
+                    execution_metadata={"operated_by": "system"},
+                )
+
             logger.info(f"Created Jupyter kernel session: {kernel_session_id}")
 
             return {
@@ -655,9 +667,8 @@ class JupyterKernelToolSet(ToolSet):
 
         client = self.clients[session_id]
         session_info = self.sessions[session_id]
-        context_prefix = self._context_prefix_code()
-        if context_prefix:
-            code = f"{context_prefix}\n{code}" if code else context_prefix
+        # Note: context_prefix is now executed once in create_session()
+        # to avoid conflicts with magic commands (%%R, etc.)
 
         try:
             # Update kernel status

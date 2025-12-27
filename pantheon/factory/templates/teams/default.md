@@ -22,6 +22,7 @@ leader:
     - package
     - task
     - code
+    - integrated_notebook
 ---
 
 {{agentic_general}}

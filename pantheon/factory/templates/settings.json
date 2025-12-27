@@ -148,7 +148,7 @@
         // Enable learning system (extract skills from trajectories of each user request/response run)
         "enable_learning": false,
         // Enable skill injection into agent prompts (defaults to enable_learning if omitted)
-        "enable_injection": true,
+        "enable_injection": false,
         // Learning mode: "pipeline" (default, lightweight) or "team" (multi-agent)
         "mode": "team",
         // Team ID for team mode (uses skill_learning_team template)
