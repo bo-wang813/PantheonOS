@@ -121,11 +121,18 @@ class ShellToolSet(ToolSet):
             timeout=timeout,
         )
 
+        # Apply max_output truncation
+        truncated = False
         if max_output and result.get("success") and result.get("output"):
             output = result["output"]
             if len(output) > max_output:
                 from pantheon.utils.truncate import truncate_string
                 result["output"] = truncate_string(output, max_output)
+                truncated = True
+        
+        # Add truncated flag (always present)
+        if "success" in result and result["success"]:
+            result["truncated"] = truncated
 
         return result
 
@@ -366,6 +373,12 @@ class ShellToolSet(ToolSet):
             if len(output) > max_output:
                 from pantheon.utils.truncate import truncate_string
                 result["output"] = truncate_string(output, max_output)
+                result["truncated"] = True
+            else:
+                result["truncated"] = False
+        elif result.get("success"):
+            # No max_output specified
+            result["truncated"] = False
 
         return result
 

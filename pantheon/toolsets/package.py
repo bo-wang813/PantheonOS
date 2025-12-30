@@ -329,11 +329,75 @@ IMPORTANT: Never return an empty array if the query matches a package or method 
         top_k: int | None = None,
         use_context: bool = False,
     ) -> dict:
-        """Search for callable tools across all packages.
+        """Search for extended tools available.
 
-        Unlike search_packages which returns package-level information,
-        this tool searches at the method level and returns full signatures
-        and documentation, enabling direct invocation via the packages API.
+        Extended tools provide reusable capabilities beyond the core tools. They are designed for building complete programs rather than one-off operations.
+
+        **When to use extended tools:**
+        - Prefer writing Python scripts that combine multiple extended tools over calling individual tools separately
+        - Use packages for multi-step workflows: fetch data → process → analyze → output results
+        - Chain package methods together in a single script for complex operations
+        - Leverage packages for domain-specific logic (analytics, data processing, integrations)
+
+
+        **Usage Pattern:**
+        ```python
+        from pantheon import packages as pp
+
+        # 1. Call directly (no explicit discovery needed)
+        # Interactive (Notebook / IPython):
+        result = await pp.packages.<pkg>.<method>(...)
+        result = await pp.packages.<pkg>.<method>(...)
+
+        # 2. Standalone Script:
+        import asyncio
+        async def main():
+            return await pp.packages.<pkg>.<method>(...)
+        result = asyncio.run(main())
+        ```
+        *Note: Replace `<pkg>` and `<method>` with names from search results.*
+
+        ### Discovery Functions using package API
+
+        #### `await pp.packages.list_packages()` → `list[dict]`
+
+        List all available packages (including MCP servers).
+
+        **Returns:** List of package summaries:
+        ```python
+        [
+            {
+                "name": str,           # Package name
+                "description": str,    # Package description
+                "methods": list[str],  # Available method names
+                "status": str          # "ready" | "empty" | "error"
+            }
+        ]
+        ```
+
+        #### `pp.packages.describe(name: str)` → `dict`
+
+        Get detailed metadata for a specific package.
+
+        **Returns:**
+        ```python
+        {
+            "success": bool,
+            "package": {
+                "name": str,
+                "description": str,
+                "methods": [
+                    {
+                        "name": str,
+                        "signature": str,   # e.g., "(data: list, format: str = 'json')"
+                        "params": dict,     # MCP only: {param_name: {type, description, required}}
+                        "doc": str,
+                        "async": bool
+                    }
+                ]
+            }
+        }
+        ```
 
         Args:
             query: Search query describing what tool/functionality you need.

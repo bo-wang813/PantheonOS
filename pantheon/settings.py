@@ -245,6 +245,11 @@ class Settings:
         """Directory for log files (REPL logs, etc.)."""
         return self.pantheon_dir / "logs"
 
+    @property
+    def tmp_dir(self) -> Path:
+        """Directory for temporary files (large tool outputs, etc.)."""
+        return self.pantheon_dir / "tmp"
+
     def get_model_selector(self) -> "ModelSelector":
         """
         Get a ModelSelector instance for smart model selection.
@@ -607,6 +612,21 @@ class Settings:
         """
         self._ensure_loaded()
         return self._settings.get("endpoint", {}).get("max_file_read_lines", 800)
+
+    @property
+    def max_file_read_chars(self) -> int:
+        """
+        Maximum characters for read_file output.
+        
+        Set higher than max_tool_content_length to allow reading larger files
+        while preventing unbounded output. When exceeded, read_file returns
+        truncated content with a 'truncated' flag to prevent infinite loops.
+        
+        Industry reference: Cursor uses 100K limit.
+        Defaults to 50000 characters.
+        """
+        self._ensure_loaded()
+        return self._settings.get("endpoint", {}).get("max_file_read_chars", 50000)
 
     @property
     def max_glob_results(self) -> int:

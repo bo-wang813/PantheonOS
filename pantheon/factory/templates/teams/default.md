@@ -30,6 +30,3 @@ leader:
 
 
 {{delegation}}
-
-
-{{packages}}

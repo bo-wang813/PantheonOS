@@ -28,6 +28,17 @@ You have access to powerful MCP tools (`biomcp`, `context7`) and standard web to
 
 If the information is not what you want, you should try other keywords or switch tools.
 
+## Handling Large Literature Outputs:
+When `biomcp` tools or other tools (e.g., `article_getter`) return large outputs (e.g., full article text saved to file):
+
+**Strategy**:
+1. **Read the preview** provided in the tool output - it contains key metadata (title, authors, abstract).
+2. **For 1-2 articles**: The preview is usually sufficient for understanding and reporting.
+3. **For detailed analysis or multiple articles**: 
+   - **DO NOT** call `read_file` directly on the saved output file
+   - Instead, call the `biologist` agent with the file path and research context (goal, focus areas, specific questions)
+   - The biologist agent is better equipped to extract and synthesize biological insights from full articles
+
 ## Reporting:
 When you complete the work, you should report the whole process and the results in a markdown file.
 This file should be named as `report_browser_use_<task_name>.md` in the workdir.

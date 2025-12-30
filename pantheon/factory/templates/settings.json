@@ -26,7 +26,9 @@
         // Maximum characters for tool output (used for smart truncation)
         "max_tool_content_length": 10000,
         // Maximum lines for file read operations
-        "max_file_read_lines": 800,
+        "max_file_read_lines": 1000,
+        // Maximum characters for file read operations (prevents single-line overflow)
+        "max_file_read_chars": 50000,
         // Maximum results for glob/search operations
         "max_glob_results": 100
     },

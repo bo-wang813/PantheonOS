@@ -14,8 +14,8 @@ Extended tools provide reusable capabilities beyond the core tools. They are des
 - Chain package methods together in a single script for complex operations
 - Leverage packages for domain-specific logic (analytics, data processing, integrations)
 
-> [!IMPORTANT]
-> **Always call `await pp.packages.list_packages()` first** to discover and refresh available packages including MCP servers.
+> [!NOTE]
+> MCP packages are automatically discovered on first access. You can optionally call `await pp.packages.list_packages()` to refresh or list all available packages.
 
 ## 1. Direct Tool: `search_tools`
 
@@ -38,11 +38,11 @@ import asyncio
 from pantheon import packages as pp
 # use async main() pattern only in python_interpreter tools, you can directly use await in notebooks
 async def main():
-    # Step 1: ALWAYS list packages first to refresh MCP servers
-    packages = await pp.packages.list_packages()
-    print(f"Available packages: {[p['name'] for p in packages]}")
+    # Optional: List all available packages for discovery
+    # packages = await pp.packages.list_packages()
+    # print(f"Available packages: {[p['name'] for p in packages]}")
     
-    # Step 2: Orchestrate package methods
+    # Call package methods directly - MCP packages auto-load on first access
     result = await pp.packages.<package>.<method>(arg1="value")
     # multi-step workflows: fetch data → process → analyze → output results
     return result

@@ -504,11 +504,38 @@ def remove_hidden_fields(content: dict) -> dict:
     return content
 
 
-def process_tool_result(result: dict) -> dict:
-    result = deepcopy(result)
-    if isinstance(result, dict):
-        result = remove_hidden_fields(result)
-        result = filter_base64_in_tool_result(result)
+def process_tool_result(
+    result: Any, 
+    max_length: int | None = None,
+) -> Any:
+    """Process tool result with optional truncation.
+    
+    Args:
+        result: Raw tool result
+        max_length: Optional max length for truncation
+        
+    Returns:
+        Processed result
+    """
+    # Remove hidden fields
+    result = remove_hidden_fields(result)
+    
+    # Apply smart truncation if max_length specified
+    # (includes base64 filtering for JSON tools)
+    if max_length is not None:
+        try:
+            from pantheon.utils.truncate import smart_truncate_result
+            return smart_truncate_result(result, max_length, filter_base64=True)
+        except Exception as e:
+            # Fallback to simple string conversion if truncation fails
+            logger.warning(f"Smart truncation failed: {e}, falling back to simple conversion")
+            content = str(result) if not isinstance(result, str) else result
+            if len(content) > max_length:
+                # Simple truncation: head + tail
+                half = max_length // 2
+                return f"{content[:half]}\n...[truncated]...\n{content[-half:]}"
+            return content
+    
     return result
 
 

@@ -415,6 +415,7 @@ class FileManagerToolSet(FileManagerToolSetBase):
         file_path: str,
         start_line: int | None = None,
         end_line: int | None = None,
+        max_chars: int | None = None,
     ) -> dict:
         """Read the contents of a text file.
 
@@ -423,17 +424,20 @@ class FileManagerToolSet(FileManagerToolSetBase):
         - start_line and end_line are inclusive.
         - To read the entire file, do not pass start_line or end_line.
         - To read a specific range, pass both start_line and end_line.
+        - max_chars: Optional character limit (default: 50000 from settings).
 
         Args:
             file_path: Path to the file to read (relative to workspace root).
             start_line: Optional. First line to read (1-indexed, inclusive).
             end_line: Optional. Last line to read (1-indexed, inclusive).
+            max_chars: Optional. Maximum characters to return (for quick preview, use lower values like 5000).
 
         Returns:
-            dict: {success: bool, content: str, total_lines: int, format: str}
+            dict: {success, content, total_lines, format, [truncated, truncation_info, suggestions]}
         
         Note:
-            Large files are limited to max_file_read_lines. Use start_line/end_line to paginate.
+            Large files are limited to max_file_read_lines and max_file_read_chars.
+            Use start_line/end_line to paginate or max_chars to control output size.
         """
         # Support both absolute and relative paths
         if os.path.isabs(file_path):
@@ -493,11 +497,30 @@ class FileManagerToolSet(FileManagerToolSetBase):
                 else:
                     content = "".join(lines)
 
+            # NEW: Apply character limit (after line selection)
+            from pantheon.settings import get_settings
+            char_limit = max_chars if max_chars is not None else get_settings().max_file_read_chars
+            
+            if len(content) > char_limit:
+                return {
+                    "success": True,
+                    "content": content[:char_limit],
+                    "total_lines": total_lines,
+                    "format": target_path.suffix.lower(),
+                    "truncated": True,
+                    "hint": (
+                        f"⚠️ Content truncated: {len(content):,} chars → {char_limit:,} chars "
+                        f"({char_limit / len(content) * 100:.1f}% shown). "
+                        f"Use other tools to read/process the full file."
+                    ),
+                }
+
             return {
                 "success": True,
                 "content": content,
                 "total_lines": total_lines,
                 "format": target_path.suffix.lower(),
+                "truncated": False,  # Explicitly mark as not truncated
             }
         except UnicodeDecodeError:
             return {

@@ -282,6 +282,9 @@ class MCPProvider(ToolProvider):
             async with self._client:
                 result = await self._client.call_tool(name, args)
 
+                # Import unwrap utility
+                from pantheon.utils.misc import unwrap_single_layer
+
                 # Priority 1: .structured_content (raw MCP JSON)
                 # Universal, portable format compatible with all systems
                 if (
@@ -291,7 +294,8 @@ class MCPProvider(ToolProvider):
                     logger.debug(
                         f"MCPProvider '{self.uri}': Extracted result via .structured_content"
                     )
-                    return result.structured_content
+                    extracted = result.structured_content
+                    return unwrap_single_layer(extracted)
 
                 # Priority 2: Parse .content[0].text (fallback for unstructured)
                 if hasattr(result, "content") and result.content:
@@ -305,7 +309,7 @@ class MCPProvider(ToolProvider):
                                 logger.debug(
                                     f"MCPProvider '{self.uri}': Extracted JSON from content text"
                                 )
-                                return parsed
+                                return unwrap_single_layer(parsed)
                             except (json.JSONDecodeError, TypeError):
                                 # Not JSON, return text as-is
                                 logger.debug(
@@ -319,7 +323,7 @@ class MCPProvider(ToolProvider):
                         f"MCPProvider '{self.uri}': Extracted result via .data "
                         f"(type: {type(result.data).__name__})"
                     )
-                    return result.data
+                    return unwrap_single_layer(result.data)
 
                 # Fallback: Return entire result
                 logger.warning(

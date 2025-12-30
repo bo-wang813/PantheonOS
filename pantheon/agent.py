@@ -971,22 +971,17 @@ class Agent:
                     }
                 )
             else:
-                processed_result = process_tool_result(result)
-                
-                # Smart truncation (base64 already filtered in process_tool_result)
-                if self.max_tool_content_length is not None:
-                    from .utils.truncate import smart_truncate_result
-                    content = smart_truncate_result(
-                        processed_result, 
-                        self.max_tool_content_length
-                    )
-                else:
-                    content = repr(processed_result)
+                # Process and truncate tool result in one step
+                content = process_tool_result(
+                    result, 
+                    max_length=self.max_tool_content_length
+                )
                 
                 tool_message.update({
                     "raw_content": result,
                     "content": content,
                 })
+
 
             return tool_message
 

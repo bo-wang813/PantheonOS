@@ -33,8 +33,19 @@ class PackageRuntimeMethod:
     package_name: str
     method_name: str
 
+    def _is_local_package(self) -> bool:
+        """Quick check if package is local/system without loading."""
+        return (
+            self.package_name in self.manager._system_names or
+            (self.manager.packages_path / self.package_name).exists()
+        )
+
     def _invoke(self, *args, **kwargs):
-        # Check if this is an MCP package
+        # Ensure MCP packages are loaded if this might be an MCP package
+        if not self.manager._mcp_packages and not self._is_local_package():
+            self.manager._auto_refresh_mcp_packages()
+        
+        # Route to MCP if it's an MCP package
         if self.manager.is_mcp_package(self.package_name):
             # MCP calls are always async, return coroutine
             return self.manager.call_mcp_tool(
@@ -43,7 +54,7 @@ class PackageRuntimeMethod:
                 **kwargs,
             )
         
-        # Regular package call
+        # Local/system package: prepare context and call manager
         context = kwargs.pop("context_variables", None)
         if context is None:
             context_payload = load_context()

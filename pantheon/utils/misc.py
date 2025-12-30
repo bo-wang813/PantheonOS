@@ -312,3 +312,49 @@ def find_free_port(
     raise RuntimeError(
         f"No free port found in range {start_port}-{start_port + max_attempts}"
     )
+
+
+def unwrap_single_layer(data: Any) -> Any:
+    """Unwrap one layer of JSON strings in the data structure.
+    
+    This handles cases where JSON data is nested as strings.
+    Only unwraps one layer to avoid excessive processing.
+    
+    Args:
+        data: Data structure to unwrap
+        
+    Returns:
+        Unwrapped data (one layer only)
+        
+    Examples:
+        >>> unwrap_single_layer({"result": "[1, 2, 3]"})
+        {"result": [1, 2, 3]}
+        
+        >>> unwrap_single_layer({"data": '{"key": "value"}'})
+        {"data": {"key": "value"}}
+    """
+    def try_parse_json(s: str) -> Any:
+        """Try to parse a string as JSON, return original if fails."""
+        if not isinstance(s, str):
+            return s
+        
+        stripped = s.strip()
+        if len(stripped) <= 2:
+            return s
+        
+        # Check if looks like JSON
+        if not ((stripped.startswith('{') and stripped.endswith('}')) or
+                (stripped.startswith('[') and stripped.endswith(']'))):
+            return s
+        
+        try:
+            return json.loads(stripped)
+        except (json.JSONDecodeError, TypeError):
+            return s
+    
+    if isinstance(data, dict):
+        return {k: try_parse_json(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [try_parse_json(item) for item in data]
+    else:
+        return try_parse_json(data)

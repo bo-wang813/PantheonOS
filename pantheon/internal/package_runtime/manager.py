@@ -197,6 +197,10 @@ class PackageManager:
     def describe_package(self, name: str) -> dict:
         """Return detailed metadata for a package."""
 
+        # Auto-refresh MCP packages ONLY if not already loaded and not a system/local package
+        if not self._mcp_packages and name not in self._system_names and not (self.packages_path / name).exists():
+            self._auto_refresh_mcp_packages()
+
         # Check if MCP package first
         if name in self._mcp_packages:
             mcp_record = self._mcp_packages[name]
@@ -287,8 +291,11 @@ class PackageManager:
         context_variables: dict | None = None,
         **kwargs,
     ) -> Any:
-        """Invoke a package method and return the raw result."""
-
+        """Invoke a package method and return the raw result.
+        
+        Note: This method only handles local/system packages.
+        MCP packages are routed via call_mcp_tool() by the runtime layer.
+        """
         record = self._ensure_loaded(package_name)
         if method_name not in record.methods:
             raise AttributeError(
@@ -315,6 +322,42 @@ class PackageManager:
     # ------------------------------------------------------------------
     # MCP Package Support
     # ------------------------------------------------------------------
+
+    def _auto_refresh_mcp_packages(self) -> None:
+        """Auto-refresh MCP packages, handling all event loop scenarios.
+        
+        This method works in two scenarios:
+        1. Event loop is running (nested) - runs in separate thread
+        2. No running loop - creates one with asyncio.run()
+        
+        Failures are logged but don't raise exceptions to avoid breaking
+        the calling code path.
+        """
+        import asyncio
+        import concurrent.futures
+        
+        try:
+            # Check if we're in a running event loop
+            try:
+                asyncio.get_running_loop()
+                # We're inside a running loop - use thread to avoid nested loop error
+                logger.debug("Auto-refreshing MCP packages (running loop detected, using thread)")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(asyncio.run, self.list_packages())
+                    future.result(timeout=30)  # 30 second timeout
+                return
+            except RuntimeError:
+                # No running loop - safe to use asyncio.run() directly
+                pass
+            
+            # No running loop: create new one with asyncio.run()
+            logger.debug("Auto-refreshing MCP packages (creating new loop)")
+            asyncio.run(self.list_packages())
+                
+        except concurrent.futures.TimeoutError:
+            logger.warning("Auto-refresh MCP packages timed out after 30 seconds")
+        except Exception as e:
+            logger.warning(f"Failed to auto-refresh MCP packages: {e}", exc_info=True)
 
     def is_mcp_package(self, name: str) -> bool:
         """Check if a package name refers to an MCP server."""
