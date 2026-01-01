@@ -28,7 +28,8 @@
       "Bash(for file in *.json)",
       "Bash(do echo \"=== $file ===\")",
       "Bash(cat:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "WebFetch(domain:pydata-sphinx-theme.readthedocs.io)"
     ],
     "deny": [],
     "ask": []

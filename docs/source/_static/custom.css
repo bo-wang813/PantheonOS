@@ -374,6 +374,50 @@ h1, h2, h3, h4, h5, h6 {
     max-width: 60px !important;
 }
 
+/* ===== Navbar Icons - Unified Styling ===== */
+
+/*
+ * 修复三个问题：
+ * 1. 移除搜索/主题按钮的橘黄色下划线（::before 伪元素）
+ * 2. 统一垂直对齐（pst-navbar-icon 高度问题）
+ * 3. 统一 hover 效果（所有导航栏按钮）
+ */
+
+/* 1. 移除 pst-navbar-icon 的 hover 下划线 */
+.pst-navbar-icon::before,
+.pst-navbar-icon:hover::before,
+.pst-navbar-icon:focus::before,
+html .pst-navbar-icon:hover::before,
+html .pst-navbar-icon:focus::before {
+    display: none !important;
+    border: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
+
+/* 2. 统一垂直对齐 - 修复父容器对齐 + 子元素样式 */
+.header-article__inner .header-article-items__end,
+.header-article__inner .header-article-items__start {
+    align-items: center !important;
+}
+
+.pst-navbar-icon {
+    height: auto !important;
+    line-height: 1 !important;
+    padding: 0 0.5rem !important;
+}
+
+/* 3. 统一 hover 效果 - 覆盖所有导航栏按钮 */
+.bd-header-article .btn:hover,
+.navbar-icon-links a:hover,
+.pst-navbar-icon:hover,
+.dropdown-toggle:hover,
+.dropdown-source-buttons .btn:hover {
+    background: rgba(91, 95, 199, 0.1) !important;
+    border-radius: 6px !important;
+    text-decoration: none !important;
+}
+
 /* ===== Misc ===== */
 html { scroll-behavior: smooth; }
 
