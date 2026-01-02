@@ -144,7 +144,7 @@ NATS-based distributed execution across multiple machines.
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Getting Started
 
 getting-started/index
@@ -155,33 +155,45 @@ getting-started/5min-tutorial
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Interfaces
 
 interfaces/index
+interfaces/repl/index
+interfaces/ui/index
+interfaces/api/index
 ```
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Configuration
 
 configuration/index
+configuration/settings
+configuration/templates/index
+configuration/mcp
+configuration/models
 ```
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Components
 
 components/index
+components/agents
+components/teams
+components/toolsets
+components/memory
+components/providers
 team/index
 toolsets/index
 ```
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Advanced
 
 advanced/index
@@ -193,7 +205,7 @@ advanced/extending
 
 ```{toctree}
 :hidden:
-:maxdepth: 2
+:maxdepth: 1
 :caption: Reference
 
 examples/index

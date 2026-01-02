@@ -48,12 +48,10 @@ With Tools
        agent = Agent(
            name="developer",
            instructions="You are a developer assistant.",
-           model="gpt-4o",
-           tools=[
-               FileManagerToolSet(),
-               ShellToolSet()
-           ]
+           model="gpt-4o"
        )
+       await agent.toolset(FileManagerToolSet("files"))
+       await agent.toolset(ShellToolSet("shell"))
 
        response = await agent.run("List files in the current directory")
        print(response.content)

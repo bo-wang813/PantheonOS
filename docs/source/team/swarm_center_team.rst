@@ -217,8 +217,10 @@ Development Team
    developer = Agent(
        name="developer",
        instructions="Implement code based on specifications.",
-       tools=[FileManagerToolSet(), PythonInterpreterToolSet()]
+       model="gpt-4o"
    )
+   await developer.toolset(FileManagerToolSet("files"))
+   await developer.toolset(PythonInterpreterToolSet("python"))
 
    tester = Agent(
        name="tester",
@@ -251,8 +253,9 @@ Research Team
    literature_reviewer = Agent(
        name="literature_reviewer",
        instructions="Review and summarize academic papers.",
-       tools=[WebToolSet()]
+       model="gpt-4o"
    )
+   await literature_reviewer.toolset(WebToolSet("web"))
 
    data_analyst = Agent(
        name="data_analyst",

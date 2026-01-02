@@ -53,13 +53,15 @@ Relationships
    from pantheon.memory import Memory
    from pantheon.providers import MCPProvider
 
-   # An agent uses tools and memory
+   # Create an agent
    agent = Agent(
        name="assistant",
+       instructions="You are a helpful assistant.",
        model="gpt-4o",
-       tools=[FileManagerToolSet()],
        memory=Memory()
    )
+   # Add toolsets at runtime
+   await agent.toolset(FileManagerToolSet("files"))
 
    # A team coordinates multiple agents
    team = Team(
@@ -67,11 +69,15 @@ Relationships
        agents=[agent1, agent2, agent3]
    )
 
-   # Providers connect to external tools
-   mcp = MCPProvider("npx -y @anthropic/mcp-server-github")
+   # Providers connect to external tools via MCP
    agent_with_mcp = Agent(
        name="github_agent",
-       tools=[mcp]
+       instructions="You help with GitHub operations.",
+       model="gpt-4o"
+   )
+   await agent_with_mcp.mcp(
+       name="github",
+       provider=MCPProvider("npx -y @anthropic/mcp-server-github")
    )
 
 When to Use What

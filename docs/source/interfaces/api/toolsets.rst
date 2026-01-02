@@ -6,6 +6,8 @@ Toolsets extend agent capabilities with tools for file operations, code executio
 Using Toolsets
 --------------
 
+Add toolsets at runtime using ``await agent.toolset()``:
+
 .. code-block:: python
 
    from pantheon import Agent
@@ -14,12 +16,12 @@ Using Toolsets
    agent = Agent(
        name="developer",
        instructions="You are a developer assistant.",
-       model="gpt-4o",
-       tools=[
-           FileManagerToolSet(),
-           ShellToolSet()
-       ]
+       model="gpt-4o"
    )
+
+   # Add toolsets at runtime (name parameter is required)
+   await agent.toolset(FileManagerToolSet("files"))
+   await agent.toolset(ShellToolSet("shell"))
 
 Available Toolsets
 ------------------
@@ -31,7 +33,7 @@ Available Toolsets
    from pantheon.toolsets import FileManagerToolSet
 
    # Read, write, edit, search files
-   file_tools = FileManagerToolSet()
+   await agent.toolset(FileManagerToolSet("files"))
 
 **Shell Commands**
 
@@ -40,7 +42,7 @@ Available Toolsets
    from pantheon.toolsets import ShellToolSet
 
    # Run shell commands with timeout protection
-   shell_tools = ShellToolSet()
+   await agent.toolset(ShellToolSet("shell"))
 
 **Python Execution**
 
@@ -49,7 +51,7 @@ Available Toolsets
    from pantheon.toolsets import PythonInterpreterToolSet
 
    # Execute Python code
-   python_tools = PythonInterpreterToolSet()
+   await agent.toolset(PythonInterpreterToolSet("python"))
 
 **Jupyter Notebooks**
 
@@ -58,7 +60,7 @@ Available Toolsets
    from pantheon.toolsets import IntegratedNotebookToolSet
 
    # Create, edit, execute notebooks
-   notebook_tools = IntegratedNotebookToolSet()
+   await agent.toolset(IntegratedNotebookToolSet("notebook"))
 
 **Web Search**
 
@@ -67,7 +69,7 @@ Available Toolsets
    from pantheon.toolsets import WebToolSet
 
    # Search and fetch web content
-   web_tools = WebToolSet()
+   await agent.toolset(WebToolSet("web"))
 
 **Knowledge Base**
 
@@ -76,7 +78,7 @@ Available Toolsets
    from pantheon.toolsets import KnowledgeToolSet
 
    # Vector store and RAG
-   knowledge_tools = KnowledgeToolSet()
+   await agent.toolset(KnowledgeToolSet("knowledge"))
 
 Creating Custom Tools
 ---------------------
@@ -162,13 +164,12 @@ Combining Toolsets
    agent = Agent(
        name="full_stack",
        instructions="You are a full-stack developer.",
-       tools=[
-           FileManagerToolSet(),
-           ShellToolSet(),
-           PythonInterpreterToolSet(),
-           WebToolSet()
-       ]
+       model="gpt-4o"
    )
+   await agent.toolset(FileManagerToolSet("files"))
+   await agent.toolset(ShellToolSet("shell"))
+   await agent.toolset(PythonInterpreterToolSet("python"))
+   await agent.toolset(WebToolSet("web"))
 
 Best Practices
 --------------

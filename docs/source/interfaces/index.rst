@@ -93,9 +93,11 @@ Python API
    agent = Agent(
        name="assistant",
        instructions="You are helpful.",
-       model="gpt-4o-mini",
-       tools=[FileManagerToolSet()]
+       model="gpt-4o-mini"
    )
+
+   # Add toolsets at runtime
+   await agent.toolset(FileManagerToolSet("files"))
 
    # Single query
    response = await agent.run("Hello!")

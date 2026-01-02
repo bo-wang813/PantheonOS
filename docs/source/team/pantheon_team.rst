@@ -194,21 +194,24 @@ Research Team
        instructions="""You are a research specialist.
        Use web search to find information.
        Delegate analysis to the analyst when needed.""",
-       tools=[WebToolSet()]
+       model="gpt-4o"
    )
+   await researcher.toolset(WebToolSet("web"))
 
    analyst = Agent(
        name="analyst",
        instructions="""You analyze information and extract insights.
-       Focus on accuracy and supporting evidence."""
+       Focus on accuracy and supporting evidence.""",
+       model="gpt-4o"
    )
 
    writer = Agent(
        name="writer",
        instructions="""You write clear, well-structured reports.
        Use markdown formatting.""",
-       tools=[FileManagerToolSet()]
+       model="gpt-4o"
    )
+   await writer.toolset(FileManagerToolSet("files"))
 
    team = PantheonTeam([researcher, analyst, writer])
    await team.chat()
@@ -218,22 +221,26 @@ Development Team
 
 .. code-block:: python
 
-   from pantheon.toolsets import ShellToolSet, PythonInterpreterToolSet
+   from pantheon.toolsets import FileManagerToolSet, PythonInterpreterToolSet
 
    architect = Agent(
        name="architect",
-       instructions="Design system architecture and delegate implementation."
+       instructions="Design system architecture and delegate implementation.",
+       model="gpt-4o"
    )
 
    developer = Agent(
        name="developer",
        instructions="Implement code based on specifications.",
-       tools=[FileManagerToolSet(), PythonInterpreterToolSet()]
+       model="gpt-4o"
    )
+   await developer.toolset(FileManagerToolSet("files"))
+   await developer.toolset(PythonInterpreterToolSet("python"))
 
    reviewer = Agent(
        name="reviewer",
-       instructions="Review code for quality and best practices."
+       instructions="Review code for quality and best practices.",
+       model="gpt-4o"
    )
 
    dev_team = PantheonTeam([architect, developer, reviewer])

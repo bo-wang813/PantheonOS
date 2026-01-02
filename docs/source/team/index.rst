@@ -235,6 +235,27 @@ Best Practices
 5. **Testing**: Test team dynamics with various scenarios
 6. **Monitoring**: Track performance and optimize agent interactions
 
+Creating Custom Teams
+---------------------
+
+Need a collaboration pattern not covered by built-in teams? You can create custom teams by extending the base ``Team`` class. See :doc:`custom_team` for a complete guide with examples.
+
+.. code-block:: python
+
+   from pantheon.team.base import Team
+   from pantheon.agent import Agent, AgentInput
+
+   class MyCustomTeam(Team):
+       def __init__(self, agents: list[Agent], my_param: str = "default"):
+           super().__init__(agents)
+           self.my_param = my_param
+
+       async def run(self, msg: AgentInput, **kwargs):
+           # Implement your collaboration logic
+           for name, agent in self.agents.items():
+               result = await agent.run(msg, **kwargs)
+           return result
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -244,3 +265,4 @@ Best Practices
    moa_team
    swarm_team
    swarm_center_team
+   custom_team

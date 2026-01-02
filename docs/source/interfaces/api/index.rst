@@ -80,8 +80,12 @@ Extend agent capabilities with tools.
 
    agent = Agent(
        name="dev",
-       tools=[FileManagerToolSet()]
+       instructions="You are a developer.",
+       model="gpt-4o"
    )
+
+   # Add toolsets at runtime
+   await agent.toolset(FileManagerToolSet("files"))
 
 See :doc:`toolsets` for available toolsets.
 

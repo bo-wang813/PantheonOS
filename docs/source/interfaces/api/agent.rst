@@ -26,14 +26,17 @@ Creating an Agent
 
 .. code-block:: python
 
-   from pantheon.toolsets import FileManagerToolSet
+   from pantheon.toolsets import FileManagerToolSet, ShellToolSet
 
    agent = Agent(
        name="developer",
        instructions="You are a developer.",
-       model="gpt-4o",
-       tools=[FileManagerToolSet()]
+       model="gpt-4o"
    )
+
+   # Add toolsets using await agent.toolset()
+   await agent.toolset(FileManagerToolSet("files"))
+   await agent.toolset(ShellToolSet("shell"))
 
 **With Memory**
 
@@ -65,8 +68,8 @@ Constructor Parameters
      - str
      - LLM model to use (e.g., "gpt-4o", "claude-3-opus")
    * - ``tools``
-     - list
-     - List of ToolSet instances
+     - list[Callable]
+     - List of callable functions (for ToolSets, use ``await agent.toolset()``)
    * - ``use_memory``
      - bool
      - Enable conversation persistence
@@ -112,6 +115,53 @@ Stream the response token by token.
    async for chunk in agent.stream("Tell me a story"):
        print(chunk.content, end="")
 
+toolset()
+~~~~~~~~~
+
+Add a toolset to the agent at runtime.
+
+.. code-block:: python
+
+   from pantheon.toolsets import FileManagerToolSet, ShellToolSet
+
+   agent = Agent(
+       name="developer",
+       instructions="You are a developer.",
+       model="gpt-4o"
+   )
+
+   # Add toolsets dynamically
+   await agent.toolset(FileManagerToolSet("files"))
+   await agent.toolset(ShellToolSet("shell"))
+
+**Parameters:**
+
+- ``toolset`` (ToolSet | ToolProvider): The toolset or provider to add
+
+**Returns:** ``Agent`` (for method chaining)
+
+mcp()
+~~~~~
+
+Add an MCP (Model Context Protocol) provider to the agent.
+
+.. code-block:: python
+
+   from pantheon.providers import MCPProvider
+
+   # Add MCP provider
+   await agent.mcp(
+       name="custom_tools",
+       provider=MCPProvider(uri="stdio://path/to/mcp/server")
+   )
+
+**Parameters:**
+
+- ``name`` (str): Name for the MCP provider
+- ``provider`` (ToolProvider): The MCP provider instance
+
+**Returns:** ``Agent`` (for method chaining)
+
 AgentResponse
 -------------
 
@@ -149,15 +199,20 @@ Custom Tools
 
 .. code-block:: python
 
-   from pantheon import ToolSet, tool
+   from pantheon.toolset import ToolSet, tool
 
    class MyTools(ToolSet):
+       def __init__(self, name: str):
+           super().__init__(name)
+
        @tool
        def calculate(self, expression: str) -> float:
            """Evaluate math expression."""
            return eval(expression)
 
-   agent = Agent(tools=[MyTools()])
+   # Add toolset at runtime
+   agent = Agent(name="calculator", instructions="...", model="gpt-4o")
+   await agent.toolset(MyTools("math"))
 
 Model Selection
 ---------------
@@ -212,7 +267,11 @@ Only include tools the agent needs:
 .. code-block:: python
 
    # Good - specific tools
-   agent = Agent(tools=[FileManagerToolSet()])
+   agent = Agent(name="dev", instructions="...", model="gpt-4o")
+   await agent.toolset(FileManagerToolSet("files"))
 
    # Avoid - too many tools can confuse the model
-   agent = Agent(tools=[ToolSet1(), ToolSet2(), ToolSet3(), ...])
+   await agent.toolset(ToolSet1("t1"))
+   await agent.toolset(ToolSet2("t2"))
+   await agent.toolset(ToolSet3("t3"))
+   # ...

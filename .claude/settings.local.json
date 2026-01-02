@@ -29,7 +29,8 @@
       "Bash(do echo \"=== $file ===\")",
       "Bash(cat:*)",
       "Bash(powershell -Command:*)",
-      "WebFetch(domain:pydata-sphinx-theme.readthedocs.io)"
+      "WebFetch(domain:pydata-sphinx-theme.readthedocs.io)",
+      "WebFetch(domain:sphinx-book-theme.readthedocs.io)"
     ],
     "deny": [],
     "ask": []

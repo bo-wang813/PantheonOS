@@ -1,379 +1,292 @@
-R Interpreter
-=============
+RInterpreterToolSet
+===================
 
-The R Interpreter toolset provides agents with the ability to execute R code for statistical analysis, data visualization, and scientific computing in a secure environment.
+The RInterpreterToolSet provides agents with the ability to execute R code in persistent interpreter sessions with automatic session management and crash recovery.
 
 Overview
 --------
 
 Key features:
 
-* **Statistical Computing**: Full R environment for statistics
-* **Advanced Visualization**: ggplot2 and other R plotting libraries
-* **Package Ecosystem**: Access to CRAN packages
-* **Data Manipulation**: tidyverse tools for data wrangling
-* **Scientific Computing**: Specialized statistical methods
+* **Process Isolation**: Each interpreter runs in a separate R process
+* **Session Management**: State persists across multiple executions
+* **Plot Support**: Automatic figure capture and base64 encoding
+* **Auto-Recovery**: Automatically restarts crashed interpreters
+* **Timeout Support**: Configurable timeouts for long-running operations
 
 Basic Usage
 -----------
 
-Setting Up R Interpreter
-~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: python
+
+   from pantheon import Agent
+   from pantheon.toolsets import RInterpreterToolSet
+
+   # Create R interpreter toolset
+   r_tools = RInterpreterToolSet(
+       name="r",
+       workdir="/path/to/workspace",  # Optional
+       r_executable="R"               # Optional: path to R
+   )
+
+   # Create agent and add toolset at runtime
+   agent = Agent(
+       name="statistician",
+       instructions="You are a statistician who analyzes data using R.",
+       model="gpt-4o"
+   )
+   await agent.toolset(r_tools)
+
+   await agent.chat()
+
+Constructor Parameters
+----------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Parameter
+     - Type
+     - Description
+   * - ``name``
+     - str
+     - Name of the toolset
+   * - ``r_executable``
+     - str
+     - Path to R executable. Default: "R"
+   * - ``r_args``
+     - list[str] | None
+     - Arguments to pass to R executable.
+   * - ``init_code``
+     - str | None
+     - R code to run when initializing each interpreter.
+   * - ``workdir``
+     - str | None
+     - Working directory for R sessions. Defaults to current directory.
+
+Tools Reference
+---------------
+
+run_r_code
+~~~~~~~~~~
+
+Execute R code with automatic session management.
 
 .. code-block:: python
 
-   from pantheon.toolsets.r import RInterpreterToolSet
-   from pantheon.toolsets.utils.toolset import run_toolsets
-   from pantheon.agent import Agent
-   
-   async def create_r_agent():
-       # Create R interpreter toolset
-       r_tools = RInterpreterToolSet("r_interpreter")
-       
-       # Run toolset service
-       async with run_toolsets([r_tools], log_level="WARNING"):
-           # Create agent with R capabilities
-           agent = Agent(
-               name="statistician",
-               instructions="You are a statistician who performs analysis using R.",
-               model="gpt-4o"
-           )
-           
-           # Connect to R toolset
-           await agent.remote_toolset(r_tools.service_id)
-           
-           # Agent can now execute R code
-           await agent.chat()
+   result = await r_tools.run_r_code(
+       code="x <- 1:10; mean(x)",
+       timeout=30  # Optional: timeout in seconds
+   )
+
+**Parameters:**
+
+- ``code``: The R code to run
+- ``timeout``: Optional timeout in seconds. Use None for no timeout.
+
+**Returns:**
+
+.. code-block:: python
+
+   {
+       "result": None,  # R doesn't return specific variables
+       "stdout": "5.5\n",
+       "stderr": "",
+       "code_executed": "x <- 1:10; mean(x)"
+   }
+
+**Figure Output:**
+
+When code generates plots, they are automatically captured:
+
+.. code-block:: python
+
+   {
+       "result": None,
+       "stdout": "...",
+       "stderr": "",
+       "fig_storage_path": "/tmp/abc123.png",
+       "base64_uri": ["data:image/png;base64,..."]
+   }
+
+new_interpreter
+~~~~~~~~~~~~~~~
+
+Create a new R interpreter session.
+
+.. code-block:: python
+
+   result = await r_tools.new_interpreter()
+   # Returns: {"interpreter_id": "abc123", "initial_output": "R version..."}
+
+run_code_in_interpreter
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Run R code in a specific interpreter session.
+
+.. code-block:: python
+
+   result = await r_tools.run_code_in_interpreter(
+       code="summary(data)",
+       interpreter_id="abc123",
+       timeout=60  # Optional
+   )
+   # Returns: str (output from R)
+
+delete_interpreter
+~~~~~~~~~~~~~~~~~~
+
+Delete an R interpreter session.
+
+.. code-block:: python
+
+   await r_tools.delete_interpreter(interpreter_id="abc123")
+
+get_interpreter_output
+~~~~~~~~~~~~~~~~~~~~~~
+
+Get remaining output from an interpreter (useful after timeout).
+
+.. code-block:: python
+
+   output = await r_tools.get_interpreter_output(
+       interpreter_id="abc123",
+       timeout=10  # Optional
+   )
+
+Session Management
+------------------
+
+State Persistence
+~~~~~~~~~~~~~~~~~
+
+Variables persist across executions in the same session:
+
+.. code-block:: python
+
+   # First execution
+   await r_tools.run_r_code("data <- mtcars")
+
+   # Second execution - data is still available
+   result = await r_tools.run_r_code("summary(data$mpg)")
+
+Client Isolation
+~~~~~~~~~~~~~~~~
+
+Each client_id gets its own interpreter session automatically:
+
+.. code-block:: python
+
+   # Different clients have isolated R sessions
+   # Client A: x <- 10
+   # Client B: x <- 20  (separate session)
+
+Auto-Recovery
+~~~~~~~~~~~~~
+
+If an interpreter crashes, it automatically restarts and reinitializes with the configured ``workdir`` and ``init_code``.
+
+Examples
+--------
 
 Statistical Analysis
 ~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Basic statistics
-   response = await agent.run([{
-       "role": "user",
-       "content": "Perform a t-test on two groups: A=[5,7,9,11,13] and B=[8,10,12,14,16]"
-   }])
-   
-   # Agent executes:
-   # group_a <- c(5, 7, 9, 11, 13)
-   # group_b <- c(8, 10, 12, 14, 16)
-   # 
-   # # Perform t-test
-   # result <- t.test(group_a, group_b)
-   # print(result)
-   # 
-   # # Effect size
-   # library(effsize)
-   # cohen.d(group_a, group_b)
+   result = await r_tools.run_r_code("""
+   # Load data
+   data(mtcars)
 
-Advanced Features
------------------
+   # T-test comparing manual vs automatic transmission
+   manual <- mtcars$mpg[mtcars$am == 1]
+   auto <- mtcars$mpg[mtcars$am == 0]
+   t.test(manual, auto)
+   """)
 
-Data Visualization with ggplot2
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   viz_agent = Agent(
-       name="viz_expert",
-       instructions="Create beautiful visualizations using ggplot2.",
-       model="gpt-4o"
-   )
-   
-   response = await viz_agent.run([{
-       "role": "user",
-       "content": "Create a scatter plot with regression line for height vs weight data"
-   }])
-   
-   # Agent creates:
-   # library(ggplot2)
-   # 
-   # # Sample data
-   # data <- data.frame(
-   #     height = rnorm(100, mean=170, sd=10),
-   #     weight = rnorm(100, mean=70, sd=15)
-   # )
-   # data$weight <- data$weight + 0.5 * (data$height - 170)
-   # 
-   # # Create plot
-   # p <- ggplot(data, aes(x=height, y=weight)) +
-   #     geom_point(alpha=0.6, color="blue") +
-   #     geom_smooth(method="lm", color="red") +
-   #     labs(title="Height vs Weight Relationship",
-   #          x="Height (cm)", y="Weight (kg)") +
-   #     theme_minimal()
-   # 
-   # print(p)
-
-Time Series Analysis
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   ts_agent = Agent(
-       name="time_series_expert",
-       instructions="Analyze time series data using R's specialized packages."
-   )
-   
-   # Agent can use:
-   # library(forecast)
-   # library(tseries)
-   # 
-   # # Load and analyze time series
-   # ts_data <- ts(data, frequency=12, start=c(2020,1))
-   # 
-   # # Decomposition
-   # decomp <- stl(ts_data, s.window="periodic")
-   # plot(decomp)
-   # 
-   # # Forecasting
-   # model <- auto.arima(ts_data)
-   # forecast_result <- forecast(model, h=12)
-   # plot(forecast_result)
-
-Machine Learning in R
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   ml_r_agent = Agent(
-       name="r_ml_expert",
-       instructions="Build machine learning models using R's ML packages."
-   )
-   
-   # Agent implements:
-   # library(caret)
-   # library(randomForest)
-   # 
-   # # Prepare data
-   # set.seed(123)
-   # trainIndex <- createDataPartition(data$target, p=0.8, list=FALSE)
-   # trainData <- data[trainIndex,]
-   # testData <- data[-trainIndex,]
-   # 
-   # # Train model
-   # rf_model <- randomForest(target ~ ., data=trainData, ntree=100)
-   # 
-   # # Evaluate
-   # predictions <- predict(rf_model, testData)
-   # confusionMatrix(predictions, testData$target)
-
-Available Packages
-------------------
-
-Common R packages available:
-
-- **Base R**: stats, graphics, utils
-- **Tidyverse**: dplyr, ggplot2, tidyr, readr
-- **Statistics**: lme4, survival, MASS
-- **Machine Learning**: caret, randomForest, xgboost
-- **Time Series**: forecast, zoo, xts
-- **Visualization**: ggplot2, plotly, lattice
-
-Working with Data
------------------
-
-Data Import/Export
+Data Visualization
 ~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   data_agent = Agent(
-       name="r_data_handler",
-       instructions="Handle data import/export in R."
-   )
-   
-   # Agent can:
-   # # Read CSV
-   # data <- read.csv("data.csv")
-   # 
-   # # Read Excel
-   # library(readxl)
-   # excel_data <- read_excel("data.xlsx")
-   # 
-   # # Save RDS
-   # saveRDS(processed_data, "processed.rds")
-   # 
-   # # Export to CSV
-   # write.csv(results, "results.csv", row.names=FALSE)
+   result = await r_tools.run_r_code("""
+   library(ggplot2)
 
-Data Manipulation
+   # Create scatter plot with regression line
+   ggplot(mtcars, aes(x=wt, y=mpg)) +
+       geom_point() +
+       geom_smooth(method="lm") +
+       labs(title="Weight vs MPG",
+            x="Weight (1000 lbs)", y="Miles per Gallon") +
+       theme_minimal()
+   """)
+   # result["base64_uri"] contains the plot image
+
+Linear Regression
 ~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Using tidyverse
-   response = await agent.run([{
-       "role": "user",
-       "content": "Clean and transform this messy dataset using dplyr"
-   }])
-   
-   # Agent uses:
-   # library(dplyr)
-   # library(tidyr)
-   # 
-   # cleaned_data <- data %>%
-   #     filter(!is.na(important_column)) %>%
-   #     mutate(new_column = column1 + column2) %>%
-   #     group_by(category) %>%
-   #     summarise(
-   #         mean_value = mean(value, na.rm=TRUE),
-   #         count = n()
-   #     ) %>%
-   #     arrange(desc(mean_value))
+   result = await r_tools.run_r_code("""
+   # Fit linear model
+   model <- lm(mpg ~ wt + hp + am, data=mtcars)
+   summary(model)
 
-Statistical Modeling
---------------------
+   # Model diagnostics
+   par(mfrow=c(2,2))
+   plot(model)
+   """)
 
-Linear Models
-~~~~~~~~~~~~~
+Time Series
+~~~~~~~~~~~
 
 .. code-block:: python
 
-   model_agent = Agent(
-       name="r_modeler",
-       instructions="Build and interpret statistical models in R."
+   result = await r_tools.run_r_code("""
+   library(forecast)
+
+   # Create time series
+   ts_data <- ts(AirPassengers, frequency=12)
+
+   # Fit ARIMA model
+   model <- auto.arima(ts_data)
+   forecast_result <- forecast(model, h=12)
+   plot(forecast_result)
+   """)
+
+Initialization Code
+~~~~~~~~~~~~~~~~~~~
+
+Use ``init_code`` to pre-load packages:
+
+.. code-block:: python
+
+   r_tools = RInterpreterToolSet(
+       name="r",
+       init_code="""
+       library(tidyverse)
+       library(ggplot2)
+       library(data.table)
+       options(warn=-1)
+       """
    )
-   
-   # Agent builds:
-   # # Multiple regression
-   # model <- lm(y ~ x1 + x2 + x3, data=df)
-   # summary(model)
-   # 
-   # # Diagnostics
-   # par(mfrow=c(2,2))
-   # plot(model)
-   # 
-   # # ANOVA
-   # anova(model)
-
-Mixed Effects Models
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # For hierarchical data
-   # library(lme4)
-   # 
-   # mixed_model <- lmer(y ~ x1 + x2 + (1|group), data=df)
-   # summary(mixed_model)
-   # 
-   # # Model comparison
-   # null_model <- lmer(y ~ 1 + (1|group), data=df)
-   # anova(null_model, mixed_model)
-
-Specialized Analysis
---------------------
-
-Survival Analysis
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   survival_agent = Agent(
-       name="survival_analyst",
-       instructions="Perform survival analysis using R."
-   )
-   
-   # Agent implements:
-   # library(survival)
-   # library(survminer)
-   # 
-   # # Kaplan-Meier
-   # km_fit <- survfit(Surv(time, event) ~ treatment, data=survival_data)
-   # ggsurvplot(km_fit, data=survival_data, pval=TRUE)
-   # 
-   # # Cox regression
-   # cox_model <- coxph(Surv(time, event) ~ age + treatment, data=survival_data)
-   # summary(cox_model)
-
-Bioinformatics
-~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   bio_agent = Agent(
-       name="bioinformatics_expert",
-       instructions="Analyze biological data using Bioconductor packages."
-   )
-   
-   # Agent can use:
-   # if (!requireNamespace("BiocManager", quietly = TRUE))
-   #     install.packages("BiocManager")
-   # 
-   # library(DESeq2)
-   # library(edgeR)
-   # 
-   # # Differential expression analysis
-   # dds <- DESeqDataSetFromMatrix(countData, colData, design = ~ condition)
-   # dds <- DESeq(dds)
-   # results <- results(dds)
 
 Best Practices
 --------------
 
-1. **Reproducibility**: Always set random seeds
-2. **Documentation**: Use comments and markdown
-3. **Visualization**: Create informative plots
-4. **Validation**: Check assumptions of statistical tests
-5. **Error Handling**: Use tryCatch for robust code
+1. **Use timeout for long operations**: Prevents blocking on slow computations
+2. **Pre-load packages with init_code**: Faster subsequent executions
+3. **Use run_r_code for most cases**: Handles session management automatically
+4. **Set seeds for reproducibility**: ``set.seed(123)`` before random operations
+5. **Run in containers**: The toolset executes arbitrary code - use isolated environments
 
-Common Patterns
----------------
+Security Warning
+----------------
 
-Report Generation
-~~~~~~~~~~~~~~~~~
+This toolset can execute arbitrary R code. Always:
 
-.. code-block:: python
-
-   report_r_agent = Agent(
-       name="r_reporter",
-       instructions="""Generate statistical reports with:
-       - Descriptive statistics
-       - Hypothesis tests
-       - Visualizations
-       - Interpretations"""
-   )
-
-Interactive Analysis
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   interactive_r_agent = Agent(
-       name="r_interactive",
-       instructions="Perform exploratory data analysis interactively."
-   )
-   
-   # Agent guides through:
-   # 1. Data exploration
-   # 2. Assumption checking
-   # 3. Model selection
-   # 4. Result interpretation
-
-Performance Optimization
-------------------------
-
-- Use vectorized operations
-- Leverage data.table for large datasets
-- Pre-allocate memory for loops
-- Use parallel processing with foreach
-- Profile code with Rprof()
-
-Integration with Python
------------------------
-
-.. code-block:: python
-
-   # Agent can bridge Python and R
-   bridge_agent = Agent(
-       name="py_r_bridge",
-       instructions="Use both Python and R for analysis."
-   )
-   
-   # Can transfer data between environments
-   # Python: save data as CSV
-   # R: read CSV and analyze
-   # Python: read R results
+- Run in a sandboxed environment (Docker, VM)
+- Limit agent instructions to specific tasks
+- Monitor code execution
+- Avoid exposing to untrusted input

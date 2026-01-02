@@ -1,438 +1,351 @@
-File Editor / Filesystem Access
-================================
+FileManagerToolSet
+==================
 
-The File Editor toolset provides agents with safe, controlled access to the filesystem for reading, writing, and manipulating files. This enables data persistence, report generation, and file-based workflows.
+The FileManagerToolSet provides agents with file system operations including reading, writing, editing files, and visual inspection of images and PDFs.
 
 Overview
 --------
 
-Key features:
+Key capabilities:
 
-* **File Operations**: Read, write, append, and delete files
-* **Directory Management**: Create and navigate directories
-* **Safe Access**: Sandboxed to specific directories
-* **Format Support**: Handle various file formats
-* **Atomic Operations**: Ensure data integrity
+* **File Operations**: Read, write, update text files
+* **Path Management**: Create directories, delete, move files
+* **Search**: Glob patterns and grep content search
+* **Visual Inspection**: Analyze images and PDFs with LLM
+* **Patch Application**: Apply unified diff or V4A format patches
 
 Basic Usage
 -----------
 
-File Reading and Writing
-~~~~~~~~~~~~~~~~~~~~~~~~
-
 .. code-block:: python
 
-   from pantheon.toolsets.filesystem import read_file, write_file, list_directory
-   from pantheon.agent import Agent
-   
-   # Create agent with file access
-   file_agent = Agent(
-       name="file_manager",
-       instructions="Manage files and directories safely.",
-       model="gpt-4o-mini",
-       tools=[read_file, write_file, list_directory]
-   )
-   
-   # Read a file
-   response = await file_agent.run([{
-       "role": "user",
-       "content": "Read the contents of config.yaml"
-   }])
-   
-   # Write a file
-   response = await file_agent.run([{
-       "role": "user",
-       "content": "Create a report.md file with the analysis results"
-   }])
+   from pantheon import Agent
+   from pantheon.toolsets import FileManagerToolSet
 
-Directory Operations
-~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # List directory contents
-   response = await file_agent.run([{
-       "role": "user",
-       "content": "Show all Python files in the src directory"
-   }])
-   
-   # Agent executes:
-   # files = list_directory("src", pattern="*.py")
-
-Advanced Features
------------------
-
-File Manipulation
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from pantheon.toolsets.filesystem import (
-       read_file, 
-       write_file, 
-       append_file,
-       delete_file,
-       move_file,
-       copy_file
-   )
-   
-   editor_agent = Agent(
-       name="file_editor",
-       instructions="Edit and manipulate files with precision.",
-       tools=[read_file, write_file, append_file, move_file, copy_file]
-   )
-   
-   # Append to log file
-   await editor_agent.run([{
-       "role": "user",
-       "content": "Add timestamp entry to activity.log"
-   }])
-   
-   # Reorganize files
-   await editor_agent.run([{
-       "role": "user",
-       "content": "Move all .txt files from temp/ to archive/"
-   }])
-
-Format-Specific Operations
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   # JSON manipulation
-   json_agent = Agent(
-       name="json_handler",
-       instructions="Work with JSON files efficiently."
-   )
-   
-   # Agent can:
-   # 1. Read JSON file
-   # 2. Parse and modify structure
-   # 3. Write back with proper formatting
-   
-   # CSV processing
-   csv_agent = Agent(
-       name="csv_processor",
-       instructions="Process CSV files and tabular data."
-   )
-   
-   # YAML configuration
-   yaml_agent = Agent(
-       name="config_manager",
-       instructions="Manage YAML configuration files."
+   # Create toolset with workspace path
+   file_tools = FileManagerToolSet(
+       name="files",
+       path="/path/to/workspace"
    )
 
-Safe File Access
-~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from pantheon.toolsets.filesystem import SafeFileSystem
-   
-   # Configure safe filesystem
-   safe_fs = SafeFileSystem(
-       root_directory="/workspace",
-       allowed_paths=[
-           "/workspace/data",
-           "/workspace/output",
-           "/workspace/temp"
-       ],
-       blocked_patterns=[
-           "*.exe",
-           "*.sh",
-           ".*"  # Hidden files
-       ],
-       max_file_size=100 * 1024 * 1024  # 100MB limit
+   # Create agent and add toolset at runtime
+   agent = Agent(
+       name="developer",
+       instructions="Help manage files in the workspace.",
+       model="gpt-4o"
    )
-   
-   secure_agent = Agent(
-       name="secure_file_agent",
-       instructions="Work with files in a secure environment.",
-       tools=safe_fs.get_tools()
-   )
+   await agent.toolset(file_tools)
 
-Common Patterns
+   await agent.chat()
+
+Constructor Parameters
+----------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Parameter
+     - Type
+     - Description
+   * - ``name``
+     - str
+     - Name of the toolset
+   * - ``path``
+     - str | Path | None
+     - Working directory path. Defaults to current directory.
+   * - ``black_list``
+     - list[str] | None
+     - List of filenames to ignore
+
+Tools Reference
 ---------------
 
-Report Generation
-~~~~~~~~~~~~~~~~~
+read_file
+~~~~~~~~~
+
+Read contents of a text file with optional line range.
 
 .. code-block:: python
 
-   report_generator = Agent(
-       name="report_writer",
-       instructions="""Generate comprehensive reports:
-       1. Gather data from multiple sources
-       2. Create structured markdown/HTML
-       3. Include tables and formatting
-       4. Save with timestamp""",
-       tools=[read_file, write_file]
+   result = await file_tools.read_file(
+       file_path="src/main.py",
+       start_line=10,    # Optional: 1-indexed, inclusive
+       end_line=50,      # Optional: 1-indexed, inclusive
+       max_chars=5000    # Optional: character limit
    )
-   
-   # Generate report
-   await report_generator.run([{
-       "role": "user",
-       "content": "Create a monthly analysis report from the data files"
-   }])
-   
-   # Agent creates:
-   # # Monthly Report - January 2024
-   # 
-   # ## Executive Summary
-   # ...
-   # 
-   # ## Data Analysis
-   # | Metric | Value | Change |
-   # |--------|-------|--------|
-   # | Sales  | $100K | +15%   |
 
-Data Pipeline
-~~~~~~~~~~~~~
+**Returns:**
 
 .. code-block:: python
 
-   pipeline_agent = Agent(
-       name="data_pipeline",
-       instructions="""Process data files through pipeline:
-       1. Read input files
-       2. Transform and clean data
-       3. Merge multiple sources
-       4. Write output files"""
-   )
-   
-   # Pipeline workflow
-   # 1. Read: data/raw/*.csv
-   # 2. Process: clean, transform, merge
-   # 3. Write: data/processed/combined.csv
-   # 4. Log: pipeline.log
+   {
+       "success": True,
+       "content": "file contents...",
+       "total_lines": 100,
+       "format": ".py",
+       "truncated": False
+   }
 
-Configuration Management
-~~~~~~~~~~~~~~~~~~~~~~~~
+write_file
+~~~~~~~~~~
+
+Create a new file or overwrite existing file.
 
 .. code-block:: python
 
-   config_agent = Agent(
-       name="config_manager",
-       instructions="""Manage application configurations:
-       1. Read current config
-       2. Validate changes
-       3. Backup before modifying
-       4. Apply updates safely"""
+   result = await file_tools.write_file(
+       file_path="output/report.md",
+       content="# Report\n...",
+       overwrite=True  # Default: True
    )
-   
-   # Safe config update
-   await config_agent.run([{
-       "role": "user",
-       "content": "Update database connection string in config.yaml"
-   }])
-   
-   # Agent workflow:
-   # 1. backup: cp config.yaml config.yaml.bak
-   # 2. read: current_config = read_file("config.yaml")
-   # 3. modify: update connection string
-   # 4. validate: check yaml syntax
-   # 5. write: write_file("config.yaml", new_config)
 
-Advanced Operations
--------------------
+**Note:** For editing existing files, use ``update_file`` instead.
 
-Batch File Processing
+update_file
+~~~~~~~~~~~
+
+Edit an existing file using string replacement.
+
+.. code-block:: python
+
+   result = await file_tools.update_file(
+       file_path="config.py",
+       old_string="DEBUG = True",
+       new_string="DEBUG = False",
+       replace_all=False,   # Default: replace first occurrence
+       start_line=None,     # Optional: limit search range
+       end_line=None
+   )
+
+**Returns:**
+
+.. code-block:: python
+
+   {"success": True, "replacements": 1}
+
+manage_path
+~~~~~~~~~~~
+
+Unified tool for directory and file path operations.
+
+.. code-block:: python
+
+   # Create directory
+   await file_tools.manage_path("create_dir", "src/components")
+
+   # Delete file or directory
+   await file_tools.manage_path("delete", "old_file.py")
+   await file_tools.manage_path("delete", "old_folder", recursive=True)
+
+   # Move/rename
+   await file_tools.manage_path("move", "old.py", new_path="new.py")
+
+**Operations:**
+
+- ``create_dir``: Create directory (parents created automatically)
+- ``delete``: Delete file or directory (use ``recursive=True`` for non-empty dirs)
+- ``move``: Move or rename file/directory
+
+glob
+~~~~
+
+Find files matching glob patterns using ``fd`` (falls back to pathlib).
+
+.. code-block:: python
+
+   result = await file_tools.glob(
+       pattern="**/*.py",           # Glob pattern
+       path="src",                  # Optional: subdirectory
+       respect_git_ignore=True      # Default: True
+   )
+
+**Pattern examples:**
+
+- ``*.py`` - Python files in current directory
+- ``**/*.py`` - Python files recursively
+- ``test_*.py`` - Test files
+- ``src/**/*.ts`` - TypeScript files in src/
+
+grep
+~~~~
+
+Search file contents using ``ripgrep`` (falls back to Python re).
+
+.. code-block:: python
+
+   result = await file_tools.grep(
+       pattern="TODO",              # Regex pattern
+       path="src",                  # Optional: directory to search
+       file_pattern="*.py",         # Optional: filter by file pattern
+       context_lines=2,             # Lines before/after match
+       case_sensitive=False,        # Default: case insensitive
+       respect_git_ignore=True
+   )
+
+**Returns:**
+
+.. code-block:: python
+
+   {
+       "success": True,
+       "matches": [
+           {
+               "file": "src/main.py",
+               "line_number": 42,
+               "line_content": "# TODO: fix this",
+               "context_before": [...],
+               "context_after": [...]
+           }
+       ],
+       "total_matches": 5,
+       "files_matched": 3
+   }
+
+apply_patch
+~~~~~~~~~~~
+
+Apply patches to files with fuzzy matching support.
+
+**Unified Diff format:**
+
+.. code-block:: python
+
+   await file_tools.apply_patch('''
+   --- a/config.py
+   +++ b/config.py
+   @@ -1,2 +1,2 @@
+    DEBUG = True
+   -PORT = 8000
+   +PORT = 3000
+   ''')
+
+**V4A/Codex format:**
+
+.. code-block:: python
+
+   await file_tools.apply_patch('''
+   *** Begin Patch
+   *** Update File: api.py
+   - old_code()
+   + new_code()
+
+   *** Create File: utils.py
+   + def helper():
+   +     pass
+   *** End Patch
+   ''', fuzzy_threshold=0.8)
+
+**Parameters:**
+
+- ``patch``: Patch content (format auto-detected)
+- ``file_path``: Optional explicit file path
+- ``fuzzy_threshold``: 0.0-1.0, default 0.5 (0.8 recommended for AI patches)
+
+Visual Inspection Tools
+-----------------------
+
+observe_images
+~~~~~~~~~~~~~~
+
+Analyze images using LLM vision capabilities.
+
+.. code-block:: python
+
+   result = await file_tools.observe_images(
+       question="What objects are in this image?",
+       image_paths=["photo1.jpg", "photo2.png"]
+   )
+
+observe_pdf_screenshots
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Render PDF pages as images and analyze with LLM.
+
+.. code-block:: python
+
+   result = await file_tools.observe_pdf_screenshots(
+       question="Summarize the charts on these pages",
+       pdf_path="report.pdf",
+       page_numbers=[1, 2, 3],  # Optional: defaults to all pages
+       dpi=300                   # Optional: default 300
+   )
+
+read_pdf
+~~~~~~~~
+
+Extract text content from PDF files.
+
+.. code-block:: python
+
+   result = await file_tools.read_pdf("document.pdf")
+   # Returns: {"success": True, "content": "Page 1...", "metadata": {...}}
+
+generate_image
+~~~~~~~~~~~~~~
+
+Generate images from text descriptions.
+
+.. code-block:: python
+
+   result = await file_tools.generate_image(
+       prompt="A sunset over mountains",
+       reference_images=["style.png"]  # Optional: for style transfer
+   )
+
+Examples
+--------
+
+File Editing Workflow
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   batch_processor = Agent(
-       name="batch_processor",
-       instructions="Process multiple files efficiently."
+   from pantheon import Agent
+   from pantheon.toolsets import FileManagerToolSet
+
+   file_tools = FileManagerToolSet(name="files", path="./project")
+
+   agent = Agent(
+       name="editor",
+       instructions="""You are a code editor. When editing files:
+       1. Use read_file to see current content
+       2. Use update_file for small changes
+       3. Use apply_patch for multiple changes""",
+       model="gpt-4o"
    )
-   
-   async def process_batch(self, file_pattern: str, operation: str):
-       """Process multiple files matching pattern."""
-       files = list_directory(".", pattern=file_pattern)
-       results = []
-       
-       for file in files:
-           try:
-               content = read_file(file)
-               processed = await self.process_content(content, operation)
-               output_file = f"processed_{file}"
-               write_file(output_file, processed)
-               results.append({"file": file, "status": "success"})
-           except Exception as e:
-               results.append({"file": file, "status": "error", "error": str(e)})
-       
-       return results
+   await agent.toolset(file_tools)
 
-File Watching
-~~~~~~~~~~~~~
+   # The agent will use appropriate tools:
+   # - read_file to view code
+   # - update_file for single replacements
+   # - apply_patch for multi-line changes
 
-.. code-block:: python
-
-   monitor_agent = Agent(
-       name="file_monitor",
-       instructions="""Monitor files for changes:
-       1. Track file modifications
-       2. Detect new files
-       3. Process changes
-       4. Log activity"""
-   )
-   
-   # Monitor implementation
-   async def watch_directory(self, path: str, callback):
-       """Watch directory for changes."""
-       last_state = self.get_directory_state(path)
-       
-       while True:
-           current_state = self.get_directory_state(path)
-           changes = self.detect_changes(last_state, current_state)
-           
-           if changes:
-               await callback(changes)
-           
-           last_state = current_state
-           await asyncio.sleep(5)  # Check every 5 seconds
-
-Atomic Operations
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   class AtomicFileAgent(Agent):
-       async def atomic_write(self, filepath: str, content: str):
-           """Write file atomically to prevent corruption."""
-           temp_file = f"{filepath}.tmp"
-           
-           try:
-               # Write to temporary file
-               write_file(temp_file, content)
-               
-               # Verify write succeeded
-               if read_file(temp_file) == content:
-                   # Atomic rename
-                   move_file(temp_file, filepath)
-               else:
-                   raise ValueError("Write verification failed")
-           finally:
-               # Cleanup
-               if os.path.exists(temp_file):
-                   delete_file(temp_file)
-
-Error Handling
---------------
-
-Graceful Failures
-~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   class RobustFileAgent(Agent):
-       async def safe_read(self, filepath: str, default=None):
-           """Read file with fallback."""
-           try:
-               return read_file(filepath)
-           except FileNotFoundError:
-               if default is not None:
-                   return default
-               # Try alternative locations
-               alternatives = [
-                   f"backup/{filepath}",
-                   f"archive/{filepath}"
-               ]
-               for alt in alternatives:
-                   try:
-                       return read_file(alt)
-                   except:
-                       continue
-               raise
-
-Permission Handling
-~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   class PermissionAwareAgent(Agent):
-       async def write_with_fallback(self, filepath: str, content: str):
-           """Handle permission errors gracefully."""
-           try:
-               write_file(filepath, content)
-           except PermissionError:
-               # Try alternative location
-               alt_path = f"temp/{os.path.basename(filepath)}"
-               write_file(alt_path, content)
-               print(f"Saved to alternative location: {alt_path}")
-
-Best Practices
---------------
-
-1. **Path Validation**: Always validate file paths
-2. **Backup Important Files**: Create backups before modifications
-3. **Use Atomic Operations**: Prevent partial writes
-4. **Handle Encodings**: Specify encoding for text files
-5. **Resource Cleanup**: Close files and clean temporary files
-6. **Security**: Validate file contents and names
-
-Performance Tips
-----------------
-
-File Caching
-~~~~~~~~~~~~
-
-.. code-block:: python
-
-   class CachedFileAgent(Agent):
-       def __init__(self):
-           super().__init__()
-           self.file_cache = {}
-           
-       async def read_cached(self, filepath: str):
-           """Read file with caching."""
-           if filepath in self.file_cache:
-               cached_time, content = self.file_cache[filepath]
-               if time.time() - cached_time < 300:  # 5 min cache
-                   return content
-           
-           content = read_file(filepath)
-           self.file_cache[filepath] = (time.time(), content)
-           return content
-
-Streaming Large Files
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   async def process_large_file(self, filepath: str, chunk_size: int = 8192):
-       """Process large files in chunks."""
-       with open(filepath, 'r') as f:
-           while True:
-               chunk = f.read(chunk_size)
-               if not chunk:
-                   break
-               await self.process_chunk(chunk)
-
-Integration Examples
---------------------
-
-With Data Analysis
+Search and Replace
 ~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # File + Python analysis
-   analyst = Agent(
-       name="file_analyst",
-       instructions="Read files and analyze with Python.",
-       tools=[read_file, write_file]
-   )
-   await analyst.remote_toolset(python_tools.service_id)
+   # Find all TODOs
+   todos = await file_tools.grep("TODO", file_pattern="**/*.py")
 
-With Web Data
-~~~~~~~~~~~~~
+   # Find specific files
+   configs = await file_tools.glob("**/config*.yaml")
 
-.. code-block:: python
+   # Update found files
+   for match in todos["matches"]:
+       await file_tools.update_file(
+           match["file"],
+           old_string="TODO:",
+           new_string="DONE:",
+           replace_all=True
+       )
 
-   # Web scraping to files
-   scraper = Agent(
-       name="web_to_file",
-       instructions="Fetch web data and save to files.",
-       tools=[web_crawl, write_file]
-   )
+Best Practices
+--------------
+
+1. **Use update_file for edits**: Don't rewrite entire files with ``write_file``
+2. **Use apply_patch for multi-file changes**: More efficient and safer
+3. **Use glob/grep for search**: More efficient than reading all files
+4. **Set fuzzy_threshold for AI patches**: Use 0.8 for tolerant matching
+5. **Respect line limits**: Large files are automatically truncated

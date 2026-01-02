@@ -332,8 +332,9 @@ Research Synthesis Team
    literature_reviewer = Agent(
        name="literature_reviewer",
        instructions="Review academic sources and cite findings.",
-       tools=[WebToolSet()]
+       model="gpt-4o"
    )
+   await literature_reviewer.toolset(WebToolSet("web"))
 
    data_analyst = Agent(
        name="data_analyst",

@@ -72,12 +72,12 @@ Make your agent more powerful by adding toolsets:
    agent = Agent(
        name="developer",
        instructions="You are a developer assistant. Help with coding tasks.",
-       model="gpt-4o",
-       tools=[
-           FileManagerToolSet(),  # Read/write/edit files
-           ShellToolSet()         # Run shell commands
-       ]
+       model="gpt-4o"
    )
+
+   # Add toolsets at runtime
+   await agent.toolset(FileManagerToolSet("files"))  # Read/write/edit files
+   await agent.toolset(ShellToolSet("shell"))        # Run shell commands
 
 Now your agent can:
 

@@ -10,6 +10,23 @@ Install with the toolsets extra for full functionality::
 
     pip install pantheon-agents[toolsets]
 
+Adding Toolsets to Agents
+-------------------------
+
+Add toolsets at runtime using ``await agent.toolset()``:
+
+.. code-block:: python
+
+   from pantheon import Agent
+   from pantheon.toolsets import FileManagerToolSet
+
+   agent = Agent(
+       name="developer",
+       instructions="You are a developer.",
+       model="gpt-4o"
+   )
+   await agent.toolset(FileManagerToolSet("files"))
+
 Toolset Summary
 ---------------
 
@@ -31,7 +48,7 @@ Comprehensive file operations with intelligent editing:
 
    from pantheon.toolsets import FileManagerToolSet
 
-   agent = Agent(tools=[FileManagerToolSet()])
+   await agent.toolset(FileManagerToolSet("files"))
 
 Code Execution
 ~~~~~~~~~~~~~~
@@ -48,7 +65,7 @@ Run shell commands with safety controls:
 
    from pantheon.toolsets import ShellToolSet
 
-   agent = Agent(tools=[ShellToolSet()])
+   await agent.toolset(ShellToolSet("shell"))
 
 **PythonInterpreterToolSet**
 
@@ -62,7 +79,7 @@ Execute Python code in isolated environment:
 
    from pantheon.toolsets import PythonInterpreterToolSet
 
-   agent = Agent(tools=[PythonInterpreterToolSet()])
+   await agent.toolset(PythonInterpreterToolSet("python"))
 
 **IntegratedNotebookToolSet**
 
@@ -76,7 +93,7 @@ Full Jupyter notebook integration:
 
    from pantheon.toolsets import IntegratedNotebookToolSet
 
-   agent = Agent(tools=[IntegratedNotebookToolSet()])
+   await agent.toolset(IntegratedNotebookToolSet("notebook"))
 
 Web & Search
 ~~~~~~~~~~~~
@@ -92,7 +109,7 @@ Web browsing and search:
 
    from pantheon.toolsets import WebToolSet
 
-   agent = Agent(tools=[WebToolSet()])
+   await agent.toolset(WebToolSet("web"))
 
 **ScraperToolSet**
 
@@ -106,7 +123,7 @@ Advanced web scraping with crawl4ai:
 
    from pantheon.toolsets import ScraperToolSet
 
-   agent = Agent(tools=[ScraperToolSet()])
+   await agent.toolset(ScraperToolSet("scraper"))
 
 Knowledge & RAG
 ~~~~~~~~~~~~~~~
@@ -127,7 +144,7 @@ Requires knowledge extra::
 
    from pantheon.toolsets import KnowledgeToolSet
 
-   agent = Agent(tools=[KnowledgeToolSet()])
+   await agent.toolset(KnowledgeToolSet("knowledge"))
 
 **VectorRAGToolSet**
 
@@ -140,7 +157,7 @@ Vector-based retrieval augmented generation:
 
    from pantheon.toolsets import VectorRAGToolSet
 
-   agent = Agent(tools=[VectorRAGToolSet()])
+   await agent.toolset(VectorRAGToolSet("rag"))
 
 Specialized Toolsets
 ~~~~~~~~~~~~~~~~~~~~
@@ -157,7 +174,7 @@ Ephemeral task tracking for workflows:
 
    from pantheon.toolsets import TaskToolSet
 
-   agent = Agent(tools=[TaskToolSet()])
+   await agent.toolset(TaskToolSet("tasks"))
 
 **PackageToolSet**
 
@@ -170,7 +187,7 @@ Python package discovery and analysis:
 
    from pantheon.toolsets import PackageToolSet
 
-   agent = Agent(tools=[PackageToolSet()])
+   await agent.toolset(PackageToolSet("packages"))
 
 **DatabaseAPIQueryToolSet**
 
@@ -183,7 +200,7 @@ Database query capabilities:
 
    from pantheon.toolsets import DatabaseAPIQueryToolSet
 
-   agent = Agent(tools=[DatabaseAPIQueryToolSet(connection_string="...")])
+   await agent.toolset(DatabaseAPIQueryToolSet("database", connection_string="..."))
 
 Language Interpreters
 ~~~~~~~~~~~~~~~~~~~~~
@@ -227,14 +244,14 @@ Combining Multiple Toolsets
            - Run shell commands
            - Execute Python code
            - Search the web for information""",
-           model="gpt-4o",
-           tools=[
-               FileManagerToolSet(),
-               ShellToolSet(),
-               PythonInterpreterToolSet(),
-               WebToolSet()
-           ]
+           model="gpt-4o"
        )
+
+       # Add toolsets at runtime
+       await agent.toolset(FileManagerToolSet("files"))
+       await agent.toolset(ShellToolSet("shell"))
+       await agent.toolset(PythonInterpreterToolSet("python"))
+       await agent.toolset(WebToolSet("web"))
 
        await agent.chat()
 
@@ -255,12 +272,12 @@ Data Analysis Setup
            instructions="""You are a data analyst.
            Use Jupyter notebooks for analysis.
            Document your work with markdown cells.""",
-           model="gpt-4o",
-           tools=[
-               IntegratedNotebookToolSet(),
-               FileManagerToolSet()
-           ]
+           model="gpt-4o"
        )
+
+       # Add toolsets at runtime
+       await agent.toolset(IntegratedNotebookToolSet("notebook"))
+       await agent.toolset(FileManagerToolSet("files"))
 
        await agent.chat()
 

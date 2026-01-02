@@ -191,19 +191,22 @@ Research Pipeline
    researcher = Agent(
        name="researcher",
        instructions="Research the topic using web search.",
-       tools=[WebToolSet()]
+       model="gpt-4o"
    )
+   await researcher.toolset(WebToolSet("web"))
 
    analyst = Agent(
        name="analyst",
-       instructions="Analyze the research findings and extract insights."
+       instructions="Analyze the research findings and extract insights.",
+       model="gpt-4o"
    )
 
    writer = Agent(
        name="writer",
        instructions="Write a comprehensive report.",
-       tools=[FileManagerToolSet()]
+       model="gpt-4o"
    )
+   await writer.toolset(FileManagerToolSet("files"))
 
    team = SequentialTeam(
        [researcher, analyst, writer],

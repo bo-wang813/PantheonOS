@@ -325,9 +325,10 @@ Development Workflow
        agent = Agent(
            name="developer",
            instructions="You are a developer assistant.",
-           model="gpt-4o",
-           tools=[FileManagerToolSet(), ShellToolSet()]
+           model="gpt-4o"
        )
+       await agent.toolset(FileManagerToolSet("files"))
+       await agent.toolset(ShellToolSet("shell"))
 
        repl = Repl(agent=agent)
        await repl.run()
@@ -345,9 +346,9 @@ Data Analysis
        agent = Agent(
            name="analyst",
            instructions="You are a data analyst.",
-           model="gpt-4o",
-           tools=[IntegratedNotebookToolSet()]
+           model="gpt-4o"
        )
+       await agent.toolset(IntegratedNotebookToolSet("notebook"))
 
        repl = Repl(agent=agent)
        await repl.run()

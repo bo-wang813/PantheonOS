@@ -41,8 +41,10 @@ Providers abstract different tool sources:
 
    agent = Agent(
        name="assistant",
-       tools=[mcp]
+       instructions="You are a helpful assistant.",
+       model="gpt-4o"
    )
+   await agent.mcp(name="mcp_tools", provider=mcp)
 
 **Local Provider**
 
@@ -51,7 +53,7 @@ Providers abstract different tool sources:
    from pantheon.providers import LocalProvider
    from pantheon.toolsets import FileManagerToolSet
 
-   provider = LocalProvider(FileManagerToolSet())
+   provider = LocalProvider(FileManagerToolSet("files"))
 
 **Tool Filtering**
 

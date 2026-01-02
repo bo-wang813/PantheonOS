@@ -43,57 +43,143 @@ Built-in Toolsets
 File Operations
 ~~~~~~~~~~~~~~~
 
-- **FileManagerToolSet**: Comprehensive file operations
+- :doc:`file_editor` - Comprehensive file operations
 
-  - ``read_file``: Read file contents
+  - ``read_file``: Read file contents with optional line range
   - ``write_file``: Write/create files
-  - ``edit_file``: Smart diff-based editing
+  - ``update_file``: String replacement editing
+  - ``manage_path``: Create/delete/move files and directories
   - ``glob``: Pattern-based file search
   - ``grep``: Content search with regex
-  - ``patch_file``: Apply unified diff patches
+  - ``apply_patch``: Apply unified diff or V4A patches
+  - ``observe_images``: Analyze images with LLM vision
+  - ``read_pdf``: Extract text from PDFs
+
+- :doc:`file_transfer` - Chunked file transfer with streaming support
+
+  - ``open_file_for_write``: Get file handle for writing
+  - ``write_chunk``: Write data chunks to open file
+  - ``close_file``: Close file handle
+  - ``read_file``: Read file with base64 encoding
 
 Code Execution
 ~~~~~~~~~~~~~~
 
-- **PythonInterpreterToolSet**: Execute Python code in isolated environment
-- **ShellToolSet**: Run shell commands with timeout and safety controls
-- **IntegratedNotebookToolSet**: Jupyter notebook with kernel management
+- :doc:`python_interpreter` - Execute Python code in isolated environment
 
-  - Create, read, update notebook cells
-  - Execute cells with output capture
-  - Kernel lifecycle management
+  - ``run_python_code``: Execute Python with auto session management
+  - ``manage_interpreters``: Create, list, delete interpreter sessions
+
+- :doc:`shell` - Run shell commands with timeout support
+
+  - ``run_command``: Execute shell commands
+  - ``get_shell_output``: Fetch output from background commands
+  - ``close_shell``: Close shell sessions
+
+- :doc:`r_interpreter` - Execute R code with session management
+
+  - ``run_r_code``: Execute R code with auto session management
+  - ``new_interpreter``, ``delete_interpreter``: Interpreter management
+
+- :doc:`julia_interpreter` - Execute Julia code with session management
+
+  - ``run_julia_code``: Execute Julia code with interpreter management
+  - ``new_interpreter``, ``delete_interpreter``: Interpreter management
+
+- :doc:`notebook` - Jupyter notebook with kernel management
+
+  - ``create_notebook``: Create or open notebooks
+  - ``add_cell``, ``update_cell``, ``delete_cell``: Cell operations
+  - ``execute_cell``: Execute cells with output capture
+  - ``manage_kernel``: Restart, interrupt, shutdown kernels
+
+Code Analysis
+~~~~~~~~~~~~~
+
+- :doc:`code_toolset` - Code navigation with tree-sitter AST analysis
+
+  - ``view_file_outline``: Get structural outline of code files
+  - ``view_code_item``: Extract specific code items by name
 
 Web & Search
 ~~~~~~~~~~~~
 
-- **WebToolSet**: Web browsing capabilities
+- :doc:`web_browse` - Web search and content retrieval
 
-  - ``search``: Web search via DuckDuckGo
-  - ``fetch_url``: Fetch and parse web pages
+  - ``duckduckgo_search``: Web search via DuckDuckGo
+  - ``web_crawl``: Fetch and extract content from URLs as markdown
 
-- **ScraperToolSet**: Advanced web scraping with crawl4ai
+- :doc:`scraper_api` - Advanced web scraping with JavaScript rendering
+
+  - ``scrape_url``: Scrape with CSS/XPath selectors
+  - Supports pagination, infinite scroll, screenshots
 
 Knowledge & RAG
 ~~~~~~~~~~~~~~~
 
-- **KnowledgeToolSet**: Knowledge base management
+- :doc:`knowledge` - Knowledge base management with hybrid search
 
-  - Vector store integration (Qdrant)
+  - ``search_knowledge``: Semantic + keyword search with Qdrant
+  - ``create_collection``, ``delete_collection``: Collection management
+  - ``add_source``, ``remove_source``: Document source management
+  - ``index_source``: Index documents into vector store
+
+- :doc:`vector_rag` - Vector-based retrieval augmented generation
+
+  - Vector store integration
   - Document indexing and retrieval
-  - LlamaIndex integration
 
-- **VectorRAGToolSet**: Vector-based retrieval augmented generation
+Media
+~~~~~
 
-Specialized Toolsets
-~~~~~~~~~~~~~~~~~~~~
+- :doc:`image_generation` - AI image generation
 
-- **TaskToolSet**: Ephemeral task tracking for workflows
-- **PackageToolSet**: Python package discovery and method extraction
-- **EvolutionToolSet**: Program evolution and optimization tools
-- **SkillbookToolSet**: Skill management for learning agents
-- **DatabaseAPIQueryToolSet**: Database query capabilities
-- **RInterpreterToolSet**: R language code execution
-- **JuliaInterpreterToolSet**: Julia language code execution
+  - ``generate_image``: Create images with DALL-E, Gemini, or other providers
+  - Supports text prompts and image references
+
+Database
+~~~~~~~~
+
+- :doc:`database_api` - Biological database queries (26+ databases)
+
+  - ``query``: Query any supported database
+  - ``list_databases``: List available databases
+  - ``database_info``: Get database schema and examples
+
+Workflow & Learning
+~~~~~~~~~~~~~~~~~~~
+
+- :doc:`task` - Modal workflow management
+
+  - ``task_boundary``: Track task progress and mode transitions
+  - ``notify_user``: User communication with confidence scoring
+
+- :doc:`skillbook` - Skill management for learning agents
+
+  - ``add_skill``, ``update_skill``, ``remove_skill``: Skill CRUD
+  - ``tag_skill``: Track skill effectiveness (helpful/harmful)
+  - ``list_skills``: Search and filter skills
+
+- :doc:`package` - Package and tool discovery
+
+  - ``search_tools``: Keyword or semantic search for tools
+  - ``search_packages``: List and filter available packages
+
+Evolution & Evaluation
+~~~~~~~~~~~~~~~~~~~~~~
+
+- :doc:`evolution` - Evolutionary code optimization
+
+  - ``evolve_code``: Optimize single code files
+  - ``evolve_codebase``: Optimize multi-file projects
+  - ``get_evolution_status``: Monitor evolution progress
+
+- :doc:`evaluator` - Code evaluation and quality assessment
+
+  - ``evaluate_code``: Run custom evaluators on code
+  - ``evaluate_codebase``: Evaluate entire projects
+  - ``compute_code_metrics``: Static code metrics
+  - ``get_llm_code_review``: AI-powered code review
 
 Quick Start
 -----------
@@ -101,22 +187,45 @@ Quick Start
 Using Built-in Toolsets
 ~~~~~~~~~~~~~~~~~~~~~~~
 
+**Method 1: In Constructor**
+
 .. code-block:: python
 
    from pantheon import Agent
    from pantheon.toolsets import FileManagerToolSet, ShellToolSet
 
    # Create toolsets
-   file_tools = FileManagerToolSet()
-   shell_tools = ShellToolSet()
+   file_tools = FileManagerToolSet(name="files")
+   shell_tools = ShellToolSet(name="shell")
 
-   # Create agent with toolsets
+   # Create agent and add toolsets at runtime
    agent = Agent(
        name="developer",
        instructions="You are a developer assistant.",
-       model="gpt-4o",
-       tools=[file_tools, shell_tools]
+       model="gpt-4o"
    )
+   await agent.toolset(file_tools)
+   await agent.toolset(shell_tools)
+
+   await agent.chat()
+
+**Alternative: Chained calls**
+
+.. code-block:: python
+
+   from pantheon import Agent
+   from pantheon.toolsets import FileManagerToolSet, ShellToolSet
+
+   # Create agent first
+   agent = Agent(
+       name="developer",
+       instructions="You are a developer assistant.",
+       model="gpt-4o"
+   )
+
+   # Add toolsets dynamically
+   await agent.toolset(FileManagerToolSet(name="files"))
+   await agent.toolset(ShellToolSet(name="shell"))
 
    await agent.chat()
 
@@ -151,8 +260,10 @@ Creating Custom Tools
    # Use with agent
    agent = Agent(
        name="assistant",
-       tools=[MyToolSet()]
+       instructions="You are a helpful assistant.",
+       model="gpt-4o"
    )
+   await agent.toolset(MyToolSet(name="my_tools"))
 
 Tool Decorator Options
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -174,6 +285,41 @@ Tool Decorator Options
            # I/O operations here
            return result
 
+Creating Custom ToolSets
+------------------------
+
+Need specialized functionality? Create custom toolsets by extending the base ``ToolSet`` class. See :doc:`custom_toolset` for a complete guide with examples including:
+
+* Session management for multi-user scenarios
+* Accessing execution context
+* Lifecycle methods (setup/cleanup)
+* Calling the LLM from within tools
+
+.. code-block:: python
+
+   from pantheon.toolset import ToolSet, tool
+
+   class TodoToolSet(ToolSet):
+       def __init__(self, name: str):
+           super().__init__(name)
+           self.todos = {}
+
+       @tool
+       async def add_todo(self, title: str, priority: str = "medium") -> dict:
+           """Add a new todo item.
+
+           Args:
+               title: The todo item title
+               priority: Priority level (low, medium, high)
+           """
+           session_id = self.get_session_id()
+           # Per-session storage
+           if session_id not in self.todos:
+               self.todos[session_id] = []
+           todo = {"id": len(self.todos[session_id]) + 1, "title": title}
+           self.todos[session_id].append(todo)
+           return {"success": True, "todo": todo}
+
 Best Practices
 --------------
 
@@ -192,7 +338,7 @@ Toolsets can be exposed as MCP (Model Context Protocol) servers::
    from pantheon.toolsets import FileManagerToolSet
 
    gateway = MCPGateway()
-   gateway.add_toolset(FileManagerToolSet())
+   gateway.add_toolset(FileManagerToolSet("files"))
    await gateway.serve()
 
 See :doc:`/api/utils` for more details on MCP integration.
@@ -201,14 +347,24 @@ See :doc:`/api/utils` for more details on MCP integration.
    :hidden:
    :maxdepth: 1
 
-   builtin_toolsets
-   custom_toolsets
    file_editor
-   notebook
+   file_transfer
+   shell
    python_interpreter
    r_interpreter
-   shell
+   julia_interpreter
+   notebook
+   code_toolset
    web_browse
    scraper_api
-   rag_system
+   knowledge
    vector_rag
+   image_generation
+   database_api
+   task
+   skillbook
+   package
+   evolution
+   evaluator
+   custom_toolset
+

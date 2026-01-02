@@ -175,14 +175,17 @@ Using MCP in Python API
    from pantheon import Agent
    from pantheon.providers import MCPProvider
 
-   # Create MCP provider
-   mcp = MCPProvider("npx -y @anthropic/mcp-server-filesystem .")
-
-   # Use with agent
+   # Create agent
    agent = Agent(
        name="assistant",
-       model="gpt-4o",
-       tools=[mcp]
+       instructions="You are a helpful assistant.",
+       model="gpt-4o"
+   )
+
+   # Add MCP provider at runtime
+   await agent.mcp(
+       name="filesystem",
+       provider=MCPProvider("npx -y @anthropic/mcp-server-filesystem .")
    )
 
    response = await agent.run("List files in current directory")

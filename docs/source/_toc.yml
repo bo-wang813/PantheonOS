@@ -13,17 +13,20 @@ chapters:
 # Interfaces (Three Entry Points)
 - file: interfaces/index
   sections:
-  - file: interfaces/repl/index
+  - title: REPL
+    file: interfaces/repl/index
     sections:
     - file: interfaces/repl/commands
     - file: interfaces/repl/file-viewer
     - file: interfaces/repl/advanced
-  - file: interfaces/ui/index
+  - title: Web UI
+    file: interfaces/ui/index
     sections:
     - file: interfaces/ui/quickstart
     - file: interfaces/ui/web-interface
     - file: interfaces/ui/advanced
-  - file: interfaces/api/index
+  - title: Python API
+    file: interfaces/api/index
     sections:
     - file: interfaces/api/quickstart
     - file: interfaces/api/agent
@@ -35,7 +38,8 @@ chapters:
 - file: configuration/index
   sections:
   - file: configuration/settings
-  - file: configuration/templates/index
+  - title: Templates
+    file: configuration/templates/index
     sections:
     - file: configuration/templates/agents
     - file: configuration/templates/teams
@@ -51,14 +55,16 @@ chapters:
   - file: components/memory
   - file: components/providers
   # Legacy detailed docs
-  - file: team/index
+  - title: Teams
+    file: team/index
     sections:
     - file: team/pantheon_team
     - file: team/sequential_team
     - file: team/moa_team
     - file: team/swarm_team
     - file: team/swarm_center_team
-  - file: toolsets/index
+  - title: Toolsets
+    file: toolsets/index
     sections:
     - file: toolsets/builtin_toolsets
     - file: toolsets/python_interpreter

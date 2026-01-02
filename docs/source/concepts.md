@@ -272,7 +272,7 @@ Use local ToolSet instances:
 from pantheon.providers import LocalProvider
 from pantheon.toolsets import FileManagerToolSet
 
-provider = LocalProvider(FileManagerToolSet())
+provider = LocalProvider(FileManagerToolSet("files"))
 ```
 
 #### ToolSetProvider
@@ -315,7 +315,7 @@ Deploy components across machines:
 
 ```python
 # On toolset server
-toolset = PythonInterpreterToolSet()
+toolset = PythonInterpreterToolSet("python")
 await toolset.serve()  # Exposes via NATS
 
 # On agent server
