@@ -8,7 +8,7 @@ Installation
 
 .. code-block:: bash
 
-   pip install pantheon-agents[toolsets]
+   pip install pantheon-agents
 
 Set your API key:
 

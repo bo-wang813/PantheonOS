@@ -3,8 +3,56 @@ Installation
 
 This guide will help you install Pantheon and set up your environment.
 
-Basic Installation
-------------------
+Requirements
+------------
+
+- Python 3.10 or higher
+- API keys for LLM providers (e.g., OpenAI, Anthropic)
+
+Using uv (Recommended)
+----------------------
+
+`uv <https://github.com/astral-sh/uv>`_ is a fast Python package manager that handles dependencies efficiently.
+
+Install uv
+~~~~~~~~~~
+
+.. code-block:: bash
+
+   # macOS/Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   # Windows
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+Clone and Install
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   git clone https://github.com/aristoteleo/pantheon-agents.git
+   cd pantheon-agents
+   uv sync
+
+With Optional Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # RAG/vector search support
+   uv sync --extra knowledge
+
+   # Slack integration
+   uv sync --extra slack
+
+   # R language support (requires R installed on system)
+   uv sync --extra r
+
+   # Multiple extras
+   uv sync --extra knowledge --extra slack
+
+Using pip
+---------
 
 Install from PyPI
 ~~~~~~~~~~~~~~~~~
@@ -13,11 +61,19 @@ Install from PyPI
 
    pip install pantheon-agents
 
-With optional toolsets (Python execution, Jupyter notebooks, web browsing, etc.):
+With Optional Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
-   pip install pantheon-agents[toolsets]
+   # RAG/vector search support (LlamaIndex, Qdrant)
+   pip install "pantheon-agents[knowledge]"
+
+   # Slack integration
+   pip install "pantheon-agents[slack]"
+
+   # Multiple extras
+   pip install "pantheon-agents[knowledge,slack]"
 
 Install from Source
 ~~~~~~~~~~~~~~~~~~~
@@ -28,50 +84,60 @@ For the latest development version:
 
    git clone https://github.com/aristoteleo/pantheon-agents.git
    cd pantheon-agents
-   pip install -e ".[toolsets]"
+   pip install -e ".[knowledge]"
 
-Installation Options
---------------------
+Development Installation
+------------------------
 
-Pantheon provides several optional dependency groups:
+For contributors and developers:
 
 .. code-block:: bash
 
-   # Core only (minimal installation)
-   pip install pantheon-agents
+   git clone https://github.com/aristoteleo/pantheon-agents.git
+   cd pantheon-agents
 
-   # With all toolsets (Python, Jupyter, Web, etc.)
-   pip install pantheon-agents[toolsets]
+   # Using uv (recommended)
+   uv sync --extra dev --extra knowledge
 
-   # With knowledge base support (LlamaIndex, Qdrant)
-   pip install pantheon-agents[knowledge]
+   # Run tests
+   uv run pytest tests/
 
-   # With Slack integration
-   pip install pantheon-agents[slack]
+   # Or using pip
+   pip install -e ".[dev,knowledge]"
+   pytest tests/
 
-   # Development dependencies
-   pip install pantheon-agents[dev]
+Optional Dependencies
+---------------------
 
-   # Multiple options
-   pip install pantheon-agents[toolsets,knowledge]
+Pantheon provides several optional dependency groups:
 
-Dependencies
-------------
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Extra
+     - Description
+   * - ``knowledge``
+     - RAG and vector search support (LlamaIndex, Qdrant, fastembed)
+   * - ``slack``
+     - Slack bot integration (slack-sdk, slack-bolt)
+   * - ``r``
+     - R language support for notebooks (rpy2, requires R installed)
+   * - ``dev``
+     - Development and testing tools (pytest, pytest-asyncio)
+
+Core Dependencies
+-----------------
 
 Core dependencies are automatically installed:
 
-- Python 3.10+
-- LiteLLM for unified LLM API access
-- Rich for terminal UI
-- prompt-toolkit for interactive REPL
-- NATS for distributed messaging
-- FastMCP for Model Context Protocol support
-
-Optional dependencies for specific features:
-
-- **Toolsets**: pandas, matplotlib, jupyter-client, tree-sitter
-- **Knowledge**: llama-index, qdrant-client, fastembed
-- **Slack**: slack-sdk, slack-bolt
+- **LiteLLM** - Unified LLM API access (OpenAI, Anthropic, etc.)
+- **Rich** - Terminal UI and formatting
+- **prompt-toolkit** - Interactive REPL
+- **NATS** - Distributed messaging
+- **FastMCP** - Model Context Protocol support
+- **LanceDB** - Vector database for embeddings
+- **Crawl4AI** - Web content extraction
 
 Environment Setup
 -----------------
@@ -91,6 +157,14 @@ Set up your LLM provider API keys:
 
    # Or use other providers supported by LiteLLM
    export GEMINI_API_KEY="your-gemini-key"
+
+You can also create a ``.env`` file in your project directory:
+
+.. code-block:: bash
+
+   # .env
+   OPENAI_API_KEY=your-openai-key
+   ANTHROPIC_API_KEY=your-anthropic-key
 
 Configuration Directory
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -114,6 +188,10 @@ The easiest way to start using Pantheon:
 
 .. code-block:: bash
 
+   # With uv
+   uv run python -m pantheon.repl
+
+   # With pip installation
    python -m pantheon.repl
 
 This launches the interactive REPL with default settings.
@@ -137,9 +215,25 @@ Verifying Installation
 
    asyncio.run(main())
 
+Troubleshooting
+---------------
+
+Common Issues
+~~~~~~~~~~~~~
+
+**ImportError: No module named 'pantheon'**
+   Ensure you've activated your virtual environment or installed the package correctly.
+
+**API key errors**
+   Make sure your API keys are set as environment variables or in a ``.env`` file.
+
+**NATS connection errors**
+   For distributed features, ensure NATS server is running. For local development,
+   Pantheon can auto-start a NATS server if ``nats-server-bin`` is installed.
+
 Next Steps
 ----------
 
-- :doc:`quickstart` - Create your first agent
-- :doc:`concepts` - Learn core concepts
-- :doc:`examples/index` - Explore example implementations
+- :doc:`first-steps` - Create your first agent
+- :doc:`/concepts` - Learn core concepts
+- :doc:`/examples/index` - Explore example implementations

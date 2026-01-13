@@ -6,9 +6,9 @@ Pantheon provides production-ready toolsets that extend agent capabilities. Tool
 Installation
 ------------
 
-Install with the toolsets extra for full functionality::
+Toolsets are included with the core package::
 
-    pip install pantheon-agents[toolsets]
+    pip install pantheon-agents
 
 Adding Toolsets to Agents
 -------------------------

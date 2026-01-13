@@ -224,8 +224,8 @@ Best Practices
 Dependencies
 ------------
 
-Requires tree-sitter packages:
+Tree-sitter packages are included in the core installation:
 
 .. code-block:: bash
 
-   pip install 'pantheon-agents[toolsets]'
+   pip install pantheon-agents

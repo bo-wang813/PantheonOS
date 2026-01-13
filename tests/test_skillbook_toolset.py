@@ -445,27 +445,40 @@ This is a user-defined skill with custom content.
 class TestGetSkillbookContent:
     """Tests for get_skillbook_content functionality."""
 
-    async def test_get_skillbook_content(self, toolset):
+    async def test_get_skillbook_content(self, toolset, monkeypatch):
         """Test getting formatted skillbook content."""
+        # Patch scan_skill_files to skip package-level upstream skills
+        # This isolates the test from changes to the package's built-in skills
+        from pantheon.internal.learning import skill_loader
+        original_scan = skill_loader.scan_skill_files
+
+        def patched_scan(skills_dir):
+            # Skip the package templates directory, only scan user skills_dir
+            if "factory" in str(skills_dir) or "templates" in str(skills_dir):
+                return []
+            return original_scan(skills_dir)
+
+        monkeypatch.setattr(skill_loader, "scan_skill_files", patched_scan)
+
         # Add some skills
         await toolset.add_skill("strategies", "Strategy one")
         await toolset.add_skill("patterns", "Pattern one")
-        
+
         result = await toolset.get_skillbook_content()
-        
+
         assert result["success"] is True
         assert "content" in result
         assert result["skill_count"] >= 2  # >= 2 because upstream skills may be loaded
         assert "Strategy one" in result["content"]
         assert "Pattern one" in result["content"]
-        
+
         # With agent name
         await toolset.add_skill(
             "strategies",
             "Agent-specific skill",
             agent_name="my_agent"
         )
-        
+
         result = await toolset.get_skillbook_content(agent_name="my_agent")
         assert "Agent-specific skill" in result["content"]
 

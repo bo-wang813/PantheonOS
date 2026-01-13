@@ -6,8 +6,8 @@ Get the web UI running in under 2 minutes.
 Prerequisites
 -------------
 
-1. Pantheon installed: ``pip install pantheon-agents[toolsets]``
-2. API key configured: ``export OPENAI_API_KEY="...``
+1. Pantheon installed: ``pip install pantheon-agents``
+2. API key configured: ``export OPENAI_API_KEY="..."``
 
 Step 1: Start ChatRoom
 ----------------------

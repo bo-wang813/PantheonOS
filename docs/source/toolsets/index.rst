@@ -6,11 +6,11 @@ Toolsets extend agent capabilities by providing access to external functions, AP
 Installation
 ------------
 
-Toolsets are included with pantheon-agents. Install with the toolsets extra for full functionality::
+Toolsets are included with the core ``pantheon-agents`` package::
 
-    pip install pantheon-agents[toolsets]
+    pip install pantheon-agents
 
-This includes dependencies for:
+All toolset dependencies are included:
 
 - Python code execution
 - Jupyter notebook integration

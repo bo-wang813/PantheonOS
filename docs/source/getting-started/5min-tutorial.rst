@@ -18,7 +18,11 @@ Step 1: Install (1 minute)
 
 .. code-block:: bash
 
-   pip install pantheon-agents[toolsets]
+   # Using uv (recommended)
+   uv pip install pantheon-agents
+
+   # Or using pip
+   pip install pantheon-agents
 
 Step 2: Set API Key (30 seconds)
 --------------------------------
