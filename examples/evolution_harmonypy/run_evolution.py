@@ -111,13 +111,6 @@ async def run_evolution(
    - Don't over-correct and remove biological signal
    - Maintain cluster separation
 
-Key areas to consider:
-- The _update_R() method computes soft cluster assignments
-- The _correct() method applies linear corrections
-- The _compute_distances() method is called frequently
-- Ridge regression in _correct() could be optimized
-- The diversity penalty in _update_R() balances batch mixing
-
 Constraints:
 - Keep the public API (run_harmony function signature)
 - Maintain numerical stability

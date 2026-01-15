@@ -235,8 +235,9 @@ class Harmony:
         self._Z_corr = torch.tensor(Z, dtype=torch.float32, device=device)
         self._Z_orig = torch.tensor(Z, dtype=torch.float32, device=device)
 
-        # Simple L2 normalization
-        self._Z_cos = self._Z_orig / torch.linalg.norm(self._Z_orig, ord=2, dim=0)
+        # Simple L2 normalization (with numerical stability)
+        den = torch.linalg.norm(self._Z_orig, ord=2, dim=0).clamp_min(1e-8)
+        self._Z_cos = self._Z_orig / den
 
         # Batch indicators
         self._Phi = torch.tensor(Phi, dtype=torch.float32, device=device)
@@ -246,7 +247,8 @@ class Harmony:
         self.B = Phi.shape[0]
         self.d = self._Z_corr.shape[0]
 
-        # Build batch index for fast ridge correction
+        # Build batch index (cell indices per batch) for fast batch-wise GEMMs.
+        # Valid because Phi is one-hot encoded via get_dummies.
         self._batch_index = []
         for b in range(self.B):
             idx = torch.where(self._Phi[b, :] > 0)[0]
@@ -271,12 +273,25 @@ class Harmony:
         self.verbose = verbose
         self._theta = torch.tensor(theta, dtype=torch.float32, device=device)
 
+        # Precompute per-cell batch index for faster indexing operations.
+        # Valid because Phi is one-hot encoded via get_dummies.
+        self._batch_id = torch.argmax(self._Phi, dim=0).to(torch.long)  # (N,)
+        self._theta_cell = self._theta[self._batch_id]                 # (N,)
+
+        # Rebuild batch index from batch_id (kept for batch-wise GEMMs; B is small)
+        self._batch_index = []
+        for b in range(self.B):
+            self._batch_index.append(torch.where(self._batch_id == b)[0])
+
         self.objective_harmony = []
         self.objective_kmeans = []
         self.objective_kmeans_dist = []
         self.objective_kmeans_entropy = []
         self.objective_kmeans_cross = []
         self.kmeans_rounds = []
+
+        # Harmony iteration counter (for annealing schedules)
+        self._iter_harmony = 0
 
         self.allocate_buffers()
         self.init_cluster(random_state)
@@ -369,6 +384,17 @@ class Harmony:
         self._R = torch.zeros((self.K, self.N), dtype=torch.float32, device=self.device)
         self._Y = torch.zeros((self.d, self.K), dtype=torch.float32, device=self.device)
 
+        # Augmented Lagrangian / ADMM-style dual variables for batch-mixing enforcement
+        self._U = torch.zeros((self.K, self.B), dtype=torch.float32, device=self.device)
+        self._rho = 1.0
+
+        # Buffers to avoid per-iteration allocations
+        self._R_prev = torch.empty((self.K, self.N), dtype=torch.float32, device=self.device)
+
+        # Buffers for ridge correction (batched SPD systems)
+        self._cov = torch.empty((self.K, self.B + 1, self.B + 1), dtype=torch.float32, device=self.device)
+        self._RHS = torch.empty((self.K, self.B + 1, self.d), dtype=torch.float32, device=self.device)
+
     def init_cluster(self, random_state):
         logger.info("Computing initial centroids with sklearn.KMeans...")
         # KMeans needs CPU numpy array
@@ -408,13 +434,15 @@ class Harmony:
         _entropy = torch.sum(safe_entropy_torch(self._R) * self._sigma[:, None]).item()
 
         # Cross entropy (R package formula) with numerical stability
+        # Avoid expensive (KxB) @ (BxN) by selecting per-cell batch via gather.
         R_sigma = self._R * self._sigma[:, None]
-        # Clamp to avoid log(0) or division by zero
+
         O_clamped = torch.clamp(self._O, min=1e-8)
         E_clamped = torch.clamp(self._E, min=1e-8)
-        ratio = (O_clamped + E_clamped) / E_clamped
-        theta_log = self._theta.unsqueeze(0).expand(self.K, -1) * torch.log(ratio)
-        _cross_entropy = torch.sum(R_sigma * (theta_log @ self._Phi)).item()
+        log_ratio = torch.log((O_clamped + E_clamped) / E_clamped)  # (K x B)
+
+        log_ratio_sel = log_ratio[:, self._batch_id]                           # (K x N)
+        _cross_entropy = torch.sum(R_sigma * self._theta_cell.unsqueeze(0) * log_ratio_sel).item()
 
         # Store with normalization constant
         self.objective_kmeans.append((kmeans_error + _entropy + _cross_entropy) * norm_const)
@@ -425,6 +453,8 @@ class Harmony:
     def harmonize(self, iter_harmony=10, verbose=True):
         converged = False
         for i in range(1, iter_harmony + 1):
+            self._iter_harmony = i
+
             if verbose:
                 logger.info(f"Iteration {i} of {iter_harmony}")
 
@@ -441,13 +471,14 @@ class Harmony:
             logger.info("Stopped before convergence")
 
     def cluster(self):
-        self._dist_mat = 2 * (1 - self._Y.T @ self._Z_cos)
-
         rounds = 0
+        r_tol = 1e-4
         for i in range(self.max_iter_kmeans):
+            self._R_prev.copy_(self._R)
+
             # Update Y
             self._Y = self._Z_cos @ self._R.T
-            self._Y = self._Y / torch.linalg.norm(self._Y, ord=2, dim=0)
+            self._Y = self._Y / torch.linalg.norm(self._Y, ord=2, dim=0).clamp_min(1e-8)
 
             # Update distance matrix
             self._dist_mat = 2 * (1 - self._Y.T @ self._Z_cos)
@@ -455,8 +486,15 @@ class Harmony:
             # Update R
             self.update_R()
 
-            # Compute objective and check convergence
+            # Compute objective once per iteration
             self.compute_objective()
+
+            # Cheap early stopping on assignment stability
+            if i >= 2:
+                delta = (self._R - self._R_prev).abs().max().item()
+                if delta < r_tol:
+                    rounds = i + 1
+                    break
 
             if i > self.window_size:
                 if self.check_convergence(0):
@@ -468,36 +506,79 @@ class Harmony:
         self.objective_harmony.append(self.objective_kmeans[-1])
 
     def update_R(self):
-        """Full-batch mirror-descent / softmax E-step update for R.
+        """Augmented Lagrangian / ADMM-style R update enforcing O¡ÖE.
 
-        Replaces the previous block-stochastic multiplicative update with a
-        deterministic full-batch update:
-            R_{:,i} = softmax( -dist/sigma - diversity_logit ) across clusters.
+        We enforce near-constraints O_{k,b} ¡Ö E_{k,b} using an augmented Lagrangian:
+          <U, O-E> + (rho/2)||O-E||^2
 
-        The diversity term is derived from the same O/E structure used in
-        compute_objective(), but applied globally as an additive logit.
+        With one-hot batch membership, this induces a batch-specific per-cluster
+        bias added to each cell's logits.
+
+        Implementation (no API change):
+          1) base logits from distances: L0 = -dist/sigma
+          2) add mixing correction logits derived from U and residual D=(O-E):
+                Delta_{k,i} = -(U_{k,b_i} + rho * D_{k,b_i}) * theta_eff[b_i]
+          3) R[:,i] = softmax(L0[:,i] + Delta[:,i])
+          4) dual ascent: U <- U + rho*(O-E)
+          5) optional rho adaptation for robustness
         """
-        # Base logits from distances (K x N)
-        L = -self._dist_mat / self._sigma[:, None]
+        eps = 1e-8
 
-        # Diversity logits (K x N): (theta * log((O+E)/E)) @ Phi
-        # Numerical stability via clamping.
-        O_clamped = torch.clamp(self._O, min=1e-8)
-        E_clamped = torch.clamp(self._E, min=1e-8)
-        ratio = (O_clamped + E_clamped) / E_clamped
-        ratio = torch.clamp(ratio, min=1e-8)
-        theta_log = self._theta.unsqueeze(0).expand(self.K, -1) * torch.log(ratio)
-        diversity_logit = theta_log @ self._Phi  # (K x N)
+        # Annealing schedule scalar s_t in [0, 1] over Harmony iterations
+        # (continuation: early iterations weaker mixing pressure)
+        if self.max_iter_harmony > 1:
+            s_t = float((self._iter_harmony - 1) / (self.max_iter_harmony - 1))
+        else:
+            s_t = 1.0
+        s_t = float(np.clip(s_t, 0.0, 1.0))
 
-        # Encourage mixing by subtracting diversity logits from base logits
-        L_adj = L - diversity_logit
+        # Effective theta under continuation
+        theta_eff = (self._theta * s_t).clamp_min(0.0)  # (B,)
 
-        # Softmax across clusters for each cell (dim=0 -> along K)
-        self._R = torch.softmax(L_adj, dim=0)
+        # Base logits from distance and sigma: L0_{k,i} = -d_{k,i} / sigma_k
+        L0 = -self._dist_mat / self._sigma[:, None].clamp_min(eps)  # (K x N)
+        L0 = L0 - L0.max(dim=0, keepdim=True).values  # stabilize per cell
 
-        # Refresh batch diversity statistics (global, consistent with R)
-        self._E = torch.outer(self._R.sum(dim=1), self._Pr_b)
+        # Current residual D = O - E under previous R (or current buffers)
+        # Use clamped values for numerical stability.
+        O = self._O.clamp_min(eps)
+        E = self._E.clamp_min(eps)
+        D = (O - E)  # (K x B)
+
+        # Per-cell batch lookup into dual and residual
+        U_sel = self._U[:, self._batch_id]          # (K x N)
+        D_sel = D[:, self._batch_id]                # (K x N)
+        theta_cell_eff = theta_eff[self._batch_id]  # (N,)
+
+        # Mixing correction logits (negative pushes D toward 0)
+        Delta = -(U_sel + self._rho * D_sel) * theta_cell_eff.unsqueeze(0)  # (K x N)
+
+        logits = L0 + Delta
+        logits = logits - logits.max(dim=0, keepdim=True).values
+        R = torch.softmax(logits, dim=0).clamp_min(eps)
+
+        self._R = R
         self._O = self._R @ self._Phi.T
+        self._E = torch.outer(self._R.sum(dim=1), self._Pr_b)
+
+        # Dual ascent update: U <- U + rho*(O - E)
+        D_new = (self._O - self._E)
+        self._U = self._U + self._rho * D_new
+
+        # Optional rho adaptation: increase if residual stalls; decrease if oscillating
+        # (simple, robust heuristic; keeps internal only)
+        r_norm = torch.linalg.norm(D_new).item()
+        if not hasattr(self, "_r_norm_prev"):
+            self._r_norm_prev = r_norm
+
+        # If residual not improving, increase rho (stronger enforcement).
+        if self._r_norm_prev > 0 and r_norm > 0.99 * self._r_norm_prev:
+            self._rho = min(self._rho * 1.1, 50.0)
+        # If residual jumps up sharply, decrease rho (reduce oscillations).
+        elif r_norm > 1.5 * max(self._r_norm_prev, 1e-8):
+            self._rho = max(self._rho * 0.7, 1e-3)
+
+        self._r_norm_prev = r_norm
 
     def check_convergence(self, i_type):
         if i_type == 0:
@@ -520,51 +601,103 @@ class Harmony:
         return True
 
     def moe_correct_ridge(self):
-        """Ridge regression correction for batch effects.
+        """Hierarchical (tied) per-cluster ridge correction.
 
-        Algorithmic change:
-        - Replace explicit matrix inversion with solving linear systems via
-          torch.linalg.solve (more stable than inv and matches "solver" style).
-        - Add warm-start across Harmony iterations by caching the previous W_k.
+        Optimized implementation:
+          * builds per-cluster covariances analytically from m_k and O[k,b]
+          * forms RHS via batch-wise GEMMs (loop over batches; B is small)
+          * solves all clusters at once via batched Cholesky
+          * applies correction via batch-wise GEMMs (no loop over clusters)
+
+        Continuation / annealing:
+          * scale correction strength early to reduce overcorrection/oscillations
+          * lamb_eff = lamb_base * s_t for batch coefficients only (not intercept)
         """
-        self._Z_corr = self._Z_orig.clone()
+        eps = 1e-8
 
-        # Warm-start cache: list of W matrices, one per cluster (B+1 x d)
-        if not hasattr(self, "_W_cache") or self._W_cache is None or len(self._W_cache) != self.K:
-            self._W_cache = [None] * self.K
+        # Annealing schedule scalar s_t in [0, 1] over Harmony iterations
+        if self.max_iter_harmony > 1:
+            s_t = float((self._iter_harmony - 1) / (self.max_iter_harmony - 1))
+        else:
+            s_t = 1.0
+        s_t = float(np.clip(s_t, 0.0, 1.0))
 
-        for k in range(self.K):
-            # Compute lambda if estimating
-            if self.lambda_estimation:
-                lamb_vec = find_lambda_torch(self.alpha, self._E[k, :], self.device)
-            else:
-                lamb_vec = self._lamb
+        # Start from original each time (matches Harmony behavior)
+        self._Z_corr.copy_(self._Z_orig)
 
-            # Phi_Rk = Phi_moe scaled by R[k,:]
-            Phi_Rk = self._Phi_moe * self._R[k, :]
+        # Lambda vector
+        if self.lambda_estimation:
+            cluster_E = (self._Pr_b * float(self.N)).to(self.device)
+            lamb_vec = find_lambda_torch(self.alpha, cluster_E, self.device)
+        else:
+            lamb_vec = self._lamb
 
-            # Compute covariance (B+1 x B+1)
-            cov_mat = Phi_Rk @ self._Phi_moe.T + torch.diag(lamb_vec)
+        # Apply annealing to batch coefficients only (not intercept)
+        lamb_vec = lamb_vec.clone()
+        if lamb_vec.numel() > 1:
+            lamb_vec[1:] = lamb_vec[1:] * s_t
 
-            # Right-hand side: Phi_Rk @ Z_orig.T  -> (B+1 x d)
-            rhs = Phi_Rk @ self._Z_orig.T
+        # Shrinkage strength gamma (no API change): tie to mean lambda magnitude.
+        gamma = float(torch.mean(lamb_vec[1:]).item()) if lamb_vec.numel() > 1 else 1.0
+        gamma = max(gamma, 1e-3)
 
-            # Solve cov_mat * W = rhs
-            # (Warm-start is cached for potential future iterative solvers;
-            # torch.linalg.solve itself doesn't accept x0.)
-            W = torch.linalg.solve(cov_mat, rhs)
+        gamma_vec = torch.full((self.B + 1,), gamma, dtype=torch.float32, device=self.device)
+        gamma_vec[0] = 0.0  # do not shrink intercept
 
-            # Do not remove intercept
-            W[0, :] = 0
+        # Build covariances for all clusters analytically from masses and observed counts.
+        # cov_k:
+        #   [ m_k      O_k^T ]
+        #   [ O_k   diag(O_k)]
+        m = self._R.sum(dim=1).clamp_min(eps)  # (K,)
+        O = self._O.clamp_min(eps)             # (K x B)
 
-            # Cache for warm-start in future iterations
-            self._W_cache[k] = W
+        cov = self._cov
+        cov.zero_()
 
-            # Apply correction
-            self._Z_corr = self._Z_corr - W.T @ Phi_Rk
+        cov[:, 0, 0] = m
+        cov[:, 0, 1:] = O
+        cov[:, 1:, 0] = O
+        diag_idx = torch.arange(self.B, device=self.device)
+        cov[:, 1 + diag_idx, 1 + diag_idx] = O
 
-        # Update Z_cos
-        self._Z_cos = self._Z_corr / torch.linalg.norm(self._Z_corr, ord=2, dim=0)
+        # Add ridge + shrinkage on diagonal (broadcasted to K)
+        cov = cov + torch.diag(lamb_vec + gamma_vec).unsqueeze(0)
+
+        # Build RHS for all clusters: (K, B+1, d)
+        RHS = self._RHS
+        RHS.zero_()
+
+        # Intercept row: sum_i R[k,i] * Z[:,i]
+        RHS[:, 0, :] = self._R @ self._Z_orig.T  # (K x d)
+
+        # Batch rows: for each batch b, sum_{i in batch b} R[k,i] * Z[:,i]
+        for b in range(self.B):
+            idx = self._batch_index[b]
+            if idx.numel() == 0:
+                continue
+            Rb = self._R[:, idx]        # (K x nb)
+            Zb = self._Z_orig[:, idx]   # (d x nb)
+            RHS[:, b + 1, :] = Rb @ Zb.T  # (K x d)
+
+        # Batched solve for Wk_all: (K, B+1, d)
+        L = torch.linalg.cholesky(cov)
+        Wk_all = torch.cholesky_solve(RHS, L)
+        Wk_all[:, 0, :] = 0  # do not remove intercept
+
+        # Apply correction via batch-wise GEMMs:
+        # for cells in batch b: corr = (Wk_all[:,b+1,:].T @ R[:,idx])
+        for b in range(self.B):
+            idx = self._batch_index[b]
+            if idx.numel() == 0:
+                continue
+            Wb = Wk_all[:, b + 1, :]    # (K x d)
+            Rb = self._R[:, idx]        # (K x nb)
+            corr = Wb.T @ Rb            # (d x nb)
+            self._Z_corr[:, idx] -= corr
+
+        # Update Z_cos (with numerical stability)
+        den = torch.linalg.norm(self._Z_corr, ord=2, dim=0).clamp_min(1e-8)
+        self._Z_cos = self._Z_corr / den
 
 
 def safe_entropy_torch(x):
@@ -575,11 +708,9 @@ def safe_entropy_torch(x):
 
 
 def harmony_pow_torch(A, T):
-    """Element-wise power with different exponents per column."""
-    result = torch.empty_like(A)
-    for c in range(A.shape[1]):
-        result[:, c] = torch.pow(A[:, c], T[c])
-    return result
+    """Element-wise power with different exponents per column (vectorized)."""
+    A = A.clamp(min=1e-8)
+    return torch.exp(torch.log(A) * T.unsqueeze(0))
 
 
 def find_lambda_torch(alpha, cluster_E, device):
