@@ -395,12 +395,16 @@ class EvolutionVisualizer:
                         if i < len(coords):
                             coords_dict[dim] = coords[i]
 
+                    # Build display metrics: filter out fitness_weights, add fitness_score
+                    display_metrics = {k: v for k, v in prog.metrics.items() if k != "fitness_weights"}
+                    display_metrics["fitness_score"] = score
+
                     cells.append({
                         "coords": coords_dict,  # Full coordinates by dimension name
                         "score": score,
                         "program_id": prog_id,
                         "island_id": island_id,
-                        "metrics": prog.metrics,
+                        "metrics": display_metrics,
                         "generation": prog.generation,
                     })
 

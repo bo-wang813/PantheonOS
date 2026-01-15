@@ -347,32 +347,9 @@ def compute_fitness_score(
     if fitness_weights and isinstance(fitness_weights, dict):
         function_score = compute_function_score(metrics, fitness_weights, metric_ranges)
     else:
-        # Fallback: average all numeric metrics (excluding feature dimensions and derived scores)
-        fitness_metrics = {
-            k: v for k, v in metrics.items()
-            if k not in feature_dimensions
-            and k not in ("fitness_weights", "llm_score", "function_score")
-            and isinstance(v, (int, float))
-        }
-        if fitness_metrics:
-            # Normalize if ranges provided
-            if metric_ranges:
-                normalized_values = []
-                for k, v in fitness_metrics.items():
-                    if k in metric_ranges:
-                        min_val, max_val = metric_ranges[k]
-                        range_size = max_val - min_val
-                        if range_size > 1e-8:
-                            normalized_values.append((float(v) - min_val) / range_size)
-                        else:
-                            normalized_values.append(0.5)
-                    else:
-                        normalized_values.append(float(v))
-                function_score = sum(normalized_values) / len(normalized_values)
-            else:
-                function_score = sum(fitness_metrics.values()) / len(fitness_metrics)
-        else:
-            function_score = 0.0
+        # No fitness_weights means evaluation failed or incomplete
+        # Return 0.0 instead of using fallback logic
+        function_score = 0.0
 
     # Get llm_score (already normalized to 0-1)
     llm_score = metrics.get("llm_score", 0.5)
