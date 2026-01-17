@@ -471,9 +471,21 @@ def process_messages_for_model(messages: list[dict], model: str) -> list[dict]:
 
 
 def process_messages_for_store(messages: list[dict]) -> list[dict]:
+    """Process messages before storing in memory.
+    
+    Ensures all messages have a unique ID for later reference (e.g., revert operations).
+    """
+    from uuid import uuid4
+    
     messages = deepcopy(messages)
     messages = remove_parsed(messages)
     messages = remove_unjsonifiable_raw_content(messages)
+    
+    # Ensure all messages have an ID
+    for msg in messages:
+        if "id" not in msg or not msg["id"]:
+            msg["id"] = str(uuid4())
+    
     return messages
 
 

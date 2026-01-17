@@ -205,7 +205,7 @@ class Skillbook:
         self.enable_agent_scope = enable_agent_scope
         
         # Will be set after settings resolution
-        self.max_skills_per_section = 30
+        self.max_skills_per_section = None  # None = unlimited
         self.max_content_length = 2000
         
         # Resolve paths from settings if not provided
@@ -220,12 +220,12 @@ class Skillbook:
             
             # Load limits from settings if not provided
             if max_skills_per_section is None:
-                max_skills_per_section = learning_config.get("max_skills_per_section", 30)
+                max_skills_per_section = learning_config.get("max_skills_per_section", None)
             if max_content_length is None:
                 max_content_length = learning_config.get("max_content_length", 2000)
         
         # Build defaults if still None (e.g. settings load failed or not used)
-        self.max_skills_per_section = max_skills_per_section if max_skills_per_section is not None else 30
+        self.max_skills_per_section = max_skills_per_section  # None = unlimited
         self.max_content_length = max_content_length if max_content_length is not None else 2000
         
         self.skills_dir = Path(skills_dir) if skills_dir else None
@@ -277,14 +277,16 @@ class Skillbook:
             - Skills added through this method are marked as type='system'
               (auto-learned), distinguishing them from user-defined file skills
         """
-        # Check section limit
-        section_skills = self._sections.get(section, [])
-        if len(section_skills) >= self.max_skills_per_section:
-            # Try to evict worst skill
-            evicted = self._evict_worst_skill(section)
-            if not evicted:
-                logger.warning(f"Section '{section}' is full, cannot add skill")
-                return None
+        # Check section limit (only if limit is set)
+        if self.max_skills_per_section is not None:
+            section_skills = self._sections.get(section, [])
+            if len(section_skills) >= self.max_skills_per_section:
+                # Try to evict worst skill
+                evicted = self._evict_worst_skill(section)
+                if not evicted:
+                    logger.warning(f"Section '{section}' is full, cannot add skill")
+                    return None
+
 
         skill_id = skill_id or self._generate_id(section)
         

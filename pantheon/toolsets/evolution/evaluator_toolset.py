@@ -4,8 +4,6 @@ Evaluator ToolSet - Code evaluation tools for Agents.
 Provides tools for evaluating codebases during evolution or standalone.
 """
 
-from __future__ import annotations
-
 import asyncio
 import tempfile
 from pathlib import Path

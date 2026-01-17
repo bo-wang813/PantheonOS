@@ -500,7 +500,7 @@ class ReplUI:
             "[dim][bold purple]/revert  [/bold purple][/dim] - Revert conversation for rollback (undo)"
         )
         self.console.print(
-            "[dim][bold purple]/clear   [/bold purple][/dim] - Clear screen"
+            "[dim][bold purple]/clear   [/bold purple][/dim] - Clear conversation (requires confirmation)"
         )
         self.console.print(
             "[dim][bold purple]!<cmd>   [/bold purple][/dim] - Execute bash command directly (no LLM)"
@@ -589,10 +589,10 @@ class ReplUI:
         )
         self.console.print()
         self.console.print(
-            "[dim][bold purple]/verbose [/bold purple][/dim] - Show all details (code, files, output)"
+            "[dim][bold purple]/v       [/bold purple][/dim] - Verbose mode (show all details)"
         )
         self.console.print(
-            "[dim][bold purple]/compact [/bold purple][/dim] - Truncated output (default)"
+            "[dim][bold purple]/c       [/bold purple][/dim] - Compact mode (truncated output, default)"
         )
         self.console.print()
 

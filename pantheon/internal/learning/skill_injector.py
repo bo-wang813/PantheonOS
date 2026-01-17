@@ -192,7 +192,7 @@ async def load_dynamic_skills(
     skillbook_toolset: "SkillbookToolSet",
     user_input: str,
     context: dict,
-    top_k: int = 5,
+    top_k: int = 50,
 ) -> str:
     """
     Load dynamic skill prompt based on user input (context-relevant skills).
@@ -210,7 +210,7 @@ async def load_dynamic_skills(
         context: Context variables containing:
             - agent_name: Agent name
             - _call_agent: Agent._call_agent method (for LLM calls)
-        top_k: Maximum number of skills to return (default: 5)
+        top_k: Maximum number of skills to return (default: 50)
         
     Returns:
         Formatted skill prompt string wrapped in <EPHEMERAL_SKILLS> tags,
@@ -219,7 +219,10 @@ async def load_dynamic_skills(
     from pantheon.utils.log import logger
     from pantheon.internal.learning.skillbook import Skill
     
-    logger.info(f"load_dynamic_skills: query='{user_input}', top_k={top_k}")
+    # Truncate query for logging (avoid logging entire prompts)
+    query_preview = user_input[:100] + "..." if len(user_input) > 100 else user_input
+    logger.info(f"load_dynamic_skills: query_preview='{query_preview}', top_k={top_k}, skillbook='{skillbook_toolset.skillbook.skillbook_path}'")
+    logger.debug(f"load_dynamic_skills: full query='{user_input}'")
     logger.debug(f"load_dynamic_skills: context keys={list(context.keys())}")
     logger.debug(f"load_dynamic_skills: has _call_agent={('_call_agent' in context)}")
     
@@ -242,8 +245,12 @@ async def load_dynamic_skills(
     dynamic_skills_dicts = _filter_dynamic_skills(result["skills"])[:top_k]
 
     if not dynamic_skills_dicts:
+        logger.info("load_dynamic_skills: No skills remaining after filtering static skills")
         return ""
 
+    # Log final filtered skill IDs
+    skill_ids = [s.get("id", "unknown") for s in dynamic_skills_dicts]
+    logger.info(f"load_dynamic_skills: Final filtered skills ({len(skill_ids)}): {skill_ids}")
 
     # Convert skill dicts to Skill objects
     # Note: list_skills returns dicts with 'stats' field (string), but Skill uses helpful/harmful/neutral

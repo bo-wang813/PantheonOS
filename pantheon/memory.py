@@ -100,6 +100,14 @@ class Memory:
         self._messages.extend(messages)
         self._schedule_persist()  # Trigger debounced auto-persistence
 
+    def mark_dirty(self):
+        """Mark memory as dirty to trigger delayed persistence.
+        
+        Call this after modifying extra_data or other fields that don't
+        automatically trigger persistence (unlike add_messages).
+        """
+        self._schedule_persist()
+    
     def _schedule_persist(self):
         """Schedule debounced persistence (non-blocking).
         
@@ -430,7 +438,14 @@ class MemoryManager:
         Args:
             id: The ID of the memory.
         """
+        # Delete from memory store
         del self.memory_store[id]
+        
+        # Immediately delete the file from disk
+        file_path = self.path / f"{id}.json"
+        if file_path.exists():
+            file_path.unlink()
+            logger.debug(f"Deleted memory file: {file_path}")
 
     def list_memories(self):
         """
@@ -441,6 +456,19 @@ class MemoryManager:
         """
         return list(self.memory_store.keys())
 
+    def save_one(self, memory_id: str):
+        """
+        Save a single memory to the file system.
+        
+        Args:
+            memory_id: The ID of the memory to save.
+        """
+        memory = self.memory_store.get(memory_id)
+        if memory:
+            memory.save(str(self.path / f"{memory.id}.json"))
+        else:
+            logger.warning(f"Memory {memory_id} not found in memory store, cannot save")
+    
     def save(self):
         """
         Save all the memories to the file system.
@@ -479,4 +507,4 @@ class MemoryManager:
         """
         memory = self.get_memory(memory_id)
         memory.name = name
-        self.save()
+        self.save_one(memory_id)

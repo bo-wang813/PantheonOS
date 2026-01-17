@@ -37,12 +37,14 @@ class SingleCellBenchmarkAdapter:
         workspace_path: str = None,
         learning_config: dict = None,
         team: str = "default",
+        injection_mode: str = "auto",
     ):
         self.model_name = model_name
         self.enable_learning = enable_learning
         self.workspace_path = workspace_path or str(Path.cwd())
         self.learning_config = learning_config
         self.team_name = team
+        self.injection_mode = injection_mode
         self._team = None
         self._endpoint = None
     
@@ -79,12 +81,21 @@ class SingleCellBenchmarkAdapter:
             settings = get_settings()
             learning_config = settings.get_learning_config().copy()
             
-            # Enable learning/injection if user set enable_learning=True
+            # Apply injection mode settings
             if self.enable_learning:
-                learning_config["enable_learning"] = True
-                learning_config["enable_injection"] = True          # Static injection (all skills)
-                learning_config["enable_dynamic_injection"] = False  # Disable dynamic injection for stable evaluation
-                learning_config["static_injection_sections"] = ["*"]  # Inject all sections
+                learning_config["enable_learning"] = False
+                learning_config["enable_injection"] = True
+                
+                # Configure based on injection mode
+                if self.injection_mode == "static":
+                    learning_config["enable_injection"] = True
+                    learning_config["enable_dynamic_injection"] = False
+                    learning_config["static_injection_sections"] = ["*"]
+                elif self.injection_mode == "dynamic":
+                    learning_config["enable_injection"] = False
+                    learning_config["enable_dynamic_injection"] = True
+                    learning_config["static_injection_sections"] = []
+                # For "auto" mode, use defaults from settings
             else:
                 learning_config["enable_learning"] = False
                 learning_config["enable_injection"] = False

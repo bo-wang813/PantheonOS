@@ -109,15 +109,23 @@ def attempt_recover_result(
                 if is_correct:
                     correct_count += 1
                 
+                # Include predicted and target for supervised learning
                 question_details[qid] = {
+                    "predicted": traj.get("predicted", ans),
+                    "target": traj.get("target", ""),
                     "correct": is_correct,
                     "score": 1.0 if is_correct else 0.0,
-                    # We might lack detailed reasons/expected without full regrade, but this is enough for summary
+                    "grade_type": traj.get("grade_type", "correct" if is_correct else "incorrect"),
                 }
             else:
                 # Missing question file means incomplete run
                 answers[qid] = ""
-                question_details[qid] = {"correct": False, "score": 0.0}
+                question_details[qid] = {
+                    "predicted": "",
+                    "target": "",
+                    "correct": False, 
+                    "score": 0.0,
+                }
         
         if not found_q_files and not memory_file.exists():
             return None
@@ -128,7 +136,7 @@ def attempt_recover_result(
         # Actually, let's look mainly at the question file as that's where we save the final record.
         
         # Try to find team in the first valid question file we parsed
-        team = default
+        team = "default"
         if found_q_files:
              # Iterate through available trajectory files to find team
              for qid in capsule_info.get("questions", []):
@@ -173,6 +181,8 @@ async def run_benchmark(
     skillbook_path: str = None,
     learning_config: dict = None,
     team: str = "default",
+    injection_mode: str = "auto",
+    model_name: str = "gemini/gemini-3-flash-preview",
 ):
     """Run BixBench benchmark with Pantheon agent.
     
@@ -185,6 +195,8 @@ async def run_benchmark(
         skillbook_path: Path to skillbook.json for injection (overrides settings)
         learning_config: Full learning config dict (overrides all settings)
         team: Team template ID to use (default: default)
+        injection_mode: Injection mode (static, dynamic, auto)
+        model_name: Model name to use (e.g., gemini/gemini-3-flash-preview)
     """
     # Setup logging to file
     log_file = setup_logging(log_level=log_level)
@@ -278,23 +290,33 @@ async def run_benchmark(
             adapter_learning_config["skillbook_path"] = skillbook_path
             print(f"📚 Skillbook: {skillbook_path}")
         
-        # Enforce Static-Only Injection with All Skills
-        # 1. Disable dynamic injection
-        adapter_learning_config["max_context_skills"] = 0 
-        # 2. Enable static injection of ALL sections
-        adapter_learning_config["static_injection_sections"] = ["*"]
-        
-        print("💉 Injection Mode: Static Only (All Sections)")
+        # Configure injection mode
+        if injection_mode == "static":
+            # Static-only injection: all skills injected upfront
+            adapter_learning_config["enable_injection"] = True
+            adapter_learning_config["enable_dynamic_injection"] = False
+            adapter_learning_config["static_injection_sections"] = ["*"]
+            print("💉 Injection Mode: Static (All Skills Upfront)")
+        elif injection_mode == "dynamic":
+            # Dynamic-only injection: skills injected based on context
+            adapter_learning_config["enable_injection"] = False
+            adapter_learning_config["enable_dynamic_injection"] = True
+            adapter_learning_config["static_injection_sections"] = []  # No static injection
+            print(f"💉 Injection Mode: Dynamic")
+        else:  # auto mode
+            # Use defaults from learning config
+            print("💉 Injection Mode: Auto (Using Config Defaults)")
     elif skillbook_path or learning_config:
         # Fallback for non-learning runs if config provided (unlikely but safe)
         adapter_learning_config = learning_config.copy() if learning_config else {}
     
     # Initialize adapter and grader
     adapter = PantheonBixBenchAdapter(
-        model_name="gemini/gemini-3-flash-preview",
+        model_name=model_name,
         enable_learning=enable_learning,
         learning_config=adapter_learning_config,
         team=team,
+        injection_mode=injection_mode,
     )
     grader = BixBenchGrader()
     
@@ -417,7 +439,12 @@ async def run_benchmark(
                     agent_answer=agent_answer,
                     run_name=run_name,
                     team=team,
+                    injection_mode=injection_mode,
                 )
+                
+                # Add skillbook_path if specified
+                if skillbook_path:
+                    trajectory["skillbook_path"] = skillbook_path
                 
                 # Add grading result
                 if qid in grade_result["questions"]:
@@ -476,9 +503,9 @@ async def run_benchmark(
                 "cost": capsule_cost,
                 "duration": capsule_duration,
                 "message_count": capsule_message_count,
-                "message_count": capsule_message_count,
                 "memory_file": str(memory_file) if memory_file.exists() else None,
                 "team": team,
+                "injection_mode": injection_mode,
             }
             
             total_correct += grade_result["correct"]
@@ -525,6 +552,7 @@ async def run_benchmark(
         "run_name": run_name,
         "team": team,
         "enable_learning": enable_learning,
+        "injection_mode": injection_mode,
         "capsule_count": len(all_results),
         "total_questions": total_questions,
         "total_correct": total_correct,
@@ -537,6 +565,10 @@ async def run_benchmark(
         "avg_messages_per_capsule": total_messages / len(all_results) if all_results else 0,
         "results": all_results,
     }
+    
+    # Add skillbook_path if specified
+    if skillbook_path:
+        summary["skillbook_path"] = skillbook_path
     
     summary_file = run_output_dir / "summary.json"
     with open(summary_file, "w") as f:
@@ -588,6 +620,11 @@ def main():
                         help="Path to skillbook.json for skill injection (overrides settings)")
     parser.add_argument("--team", default="default",
                         help="Team template ID to use (default: default)")
+    parser.add_argument("--injection-mode", default="auto",
+                        choices=["static", "dynamic", "auto"],
+                        help="Injection mode: static (all skills upfront), dynamic (context-based), auto (config defaults)")
+    parser.add_argument("--model", default="gemini/gemini-3-flash-preview",
+                        help="Model name to use (default: gemini/gemini-3-flash-preview)")
     
     args = parser.parse_args()
     
@@ -599,6 +636,8 @@ def main():
         continue_from=args.continue_from,
         skillbook_path=args.skillbook_path,
         team=args.team,
+        injection_mode=args.injection_mode,
+        model_name=args.model,
     ))
 
 

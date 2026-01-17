@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import shutil
 
-from adapter import SingleCellBenchmarkAdapter
+from .adapter import SingleCellBenchmarkAdapter
 
 # Configure logging (BixBench style)
 logging.basicConfig(
@@ -25,7 +25,10 @@ async def run_benchmark(
     round_name: str,
     limit: int = None,
     team: str = "default",
-    model: str = "gemini/gemini-3-flash-preview"
+    model: str = "gemini/gemini-3-flash-preview",
+    enable_learning: bool = False,
+    injection_mode: str = "auto",
+    skillbook_path: str = None,
 ):
     base_dir = Path(__file__).parent.resolve()
     jsonl_path = base_dir / "benchmark.jsonl"
@@ -79,7 +82,10 @@ async def run_benchmark(
     adapter = SingleCellBenchmarkAdapter(
         model_name=model,
         team=team,
-        workspace_path=str(Path.cwd())
+        workspace_path=str(Path.cwd()),
+        enable_learning=enable_learning,
+        injection_mode=injection_mode,
+        learning_config={"skillbook_path": skillbook_path} if skillbook_path else None,
     )
 
     results = []
@@ -201,8 +207,14 @@ Begin now. Work autonomously without asking questions.
                     "duration": duration,
                     "status": "completed" if final_answer else "failed_no_answer",
                     "messages_count": len(messages),
-                    "memory_file": str(memory_file)
+                    "memory_file": str(memory_file),
+                    "enable_learning": enable_learning,
+                    "injection_mode": injection_mode,
                 }
+                
+                # Add skillbook_path if provided
+                if skillbook_path:
+                    output["skillbook_path"] = skillbook_path
                 
             except Exception as e:
                 logger.error(f"❌ [{task_id}] Failed: {e}")
@@ -223,15 +235,15 @@ Begin now. Work autonomously without asking questions.
             logger.info(f"✓ [{task_id}] Finished. Status: {output['status']}")
             
             # Update Report (Real-time)
-            generate_report(results, results_dir, round_name)
+            generate_report(results, results_dir, round_name, skillbook_path)
             
     finally:
         await adapter.cleanup()
 
     # Final Report verification
-    generate_report(results, results_dir, round_name)
+    generate_report(results, results_dir, round_name, skillbook_path)
 
-def generate_report(results, results_dir, round_name):
+def generate_report(results, results_dir, round_name, skillbook_path=None):
     timestamp = datetime.now().isoformat()
     # Summary Report
     completed = [r for r in results if r.get('status') == 'completed']
@@ -243,8 +255,14 @@ def generate_report(results, results_dir, round_name):
         "total_tasks": len(results),
         "completed_count": len(completed),
         "error_count": len(errors),
+        "enable_learning": results[0].get("enable_learning", False) if results else False,
+        "injection_mode": results[0].get("injection_mode", "auto") if results else "auto",
         "results": results
     }
+    
+    # Add skillbook_path if provided
+    if skillbook_path:
+        report["skillbook_path"] = skillbook_path
     
     with open(results_dir / "report.json", 'w') as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
@@ -281,6 +299,11 @@ async def main():
     parser.add_argument("--limit", type=int, help="Limit number of tasks to run")
     parser.add_argument("--team", default="default", help="Team template to use")
     parser.add_argument("--model", default="gemini/gemini-3-flash-preview", help="Model override")
+    parser.add_argument("--enable-learning", action="store_true", help="Enable Learning module")
+    parser.add_argument("--injection-mode", default="auto",
+                        choices=["static", "dynamic", "auto"],
+                        help="Injection mode: static (all skills upfront), dynamic (context-based), auto (config defaults)")
+    parser.add_argument("--skillbook-path", default=None, help="Path to skillbook.json for skill injection")
     
     args = parser.parse_args()
     
@@ -289,7 +312,15 @@ async def main():
     else:
         round_name = f"round_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-    await run_benchmark(round_name, args.limit, args.team, args.model)
+    await run_benchmark(
+        round_name, 
+        args.limit, 
+        args.team, 
+        args.model,
+        args.enable_learning,
+        args.injection_mode,
+        args.skillbook_path,
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())

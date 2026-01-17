@@ -484,7 +484,10 @@ class SkillbookToolSet(ToolSet):
         Returns:
             Filtered list of matching skills
         """
-        logger.info(f"Semantic search: query='{query}', total_skills={len(skills)}")
+        # Truncate query for logging
+        query_preview = query[:100] + "..." if len(query) > 100 else query
+        logger.info(f"Semantic search: query_preview='{query_preview}', total_skills={len(skills)}")
+        logger.debug(f"Semantic search: full query='{query}'")
         
         # Get execution context (like observe_images)
         context = self.get_context()
@@ -534,7 +537,7 @@ class SkillbookToolSet(ToolSet):
             id_set = set(mid.lower() for mid in matched_ids)
             results = [s for s in skills if s.id.lower() in id_set]
             
-            logger.info(f"Semantic search: Matched {len(results)} skills for query: '{query}'")
+            logger.info(f"Semantic search: Matched {len(results)} skills")
             logger.debug(f"Semantic search: Matched skill IDs: {[s.id for s in results]}")
             return results
             

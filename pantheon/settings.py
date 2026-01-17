@@ -294,7 +294,7 @@ class Settings:
             "learning_dir": str(
                 self.learning_dir / learning.get("learning_dir", "pipeline")
             ),
-            "max_skills_per_section": learning.get("max_skills_per_section", 30),
+            "max_skills_per_section": learning.get("max_skills_per_section", None),  # None = unlimited
             "max_content_length": learning.get("max_content_length", 2000),  # For Skillbook (skill content limit, increased to support code snippets)
             "max_tool_arg_length": learning.get("max_tool_arg_length", 100),  # For learning trajectory
             "max_tool_output_length": learning.get("max_tool_output_length", 150),  # For learning trajectory
@@ -308,6 +308,8 @@ class Settings:
             "team_id": learning.get("team_id", "skill_learning_team"),
             # Static injection sections filter (None = use default rules)
             "static_injection_sections": learning.get("static_injection_sections"),
+            # Dynamic injection top-k limit
+            "dynamic_injection_top_k": learning.get("dynamic_injection_top_k", 50),
         }
 
     def get_compression_config(self) -> Dict[str, Any]:

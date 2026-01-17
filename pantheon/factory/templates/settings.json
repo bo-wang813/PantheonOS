@@ -49,7 +49,8 @@
             "shell", // Shell command execution (use with caution)
             // "knowledge", // Knowledge base/RAG
             // === Tier 3: Advanced Tools (enable as needed) ===
-            "integrated_notebook" // Integrated Notebook (with file operations)
+            "integrated_notebook", // Integrated Notebook (with file operations)
+            "evolution"
             // === More Available Services (commented, enable as needed) ===
             // "file_editor",     // Advanced file editing (Claude Code style)
             // "jupyter_kernel",  // Standard Jupyter Kernel
@@ -165,7 +166,7 @@
         // Learning mode: "pipeline" (default, lightweight) or "team" (multi-agent)
         "mode": "pipeline",
         // Team ID for team mode (uses skill_learning_team template)
-        "team_id": "skill_learning_team_v4",
+        "team_id": "learning/skill_learning_team_v4",
         // Enable agent-specific skill scope filtering, If false, all agents see all skills (recommended for simpler setups)
         "enable_agent_scope": false,
         // LLM model for reflection and skill management, Uses quality level: "high", "normal", "low", or specific model name
@@ -174,8 +175,8 @@
         "skillbook_path": "skillbook.json",
         // Learning data directory (relative to .pantheon/learning/)
         "learning_dir": "tmp",
-        // Max skills per section (auto-evicts low-score skills when exceeded)
-        "max_skills_per_section": 30,
+        // Max skills per section (null = unlimited, or set a number to auto-evict low-score skills)
+        "max_skills_per_section": null,
         // Max characters for single skill content (Skillbook limit)
         "max_content_length": 2000,
         // Max length for tool argument values in learning trajectory
@@ -195,7 +196,10 @@
         // Minimum confidence to process reflection (skip if below)
         "min_confidence_threshold": 0.5,
         // Minimum atomicity score for ADD operations (reject if below)
-        "min_atomicity_score": 0.85
+        "min_atomicity_score": 0.85,
+        // === Dynamic Injection Configuration ===
+        // Maximum number of skills to inject dynamically per task (based on semantic relevance)
+        "dynamic_injection_top_k": 50
     },
     // ===== Context Compression Configuration =====
     // Automatic context compression when approaching token limits

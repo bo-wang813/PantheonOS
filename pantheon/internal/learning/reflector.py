@@ -383,7 +383,13 @@ class Reflector:
         # Compress trajectory
         # Use settings-configured truncation limits or override from learning_config
         # Enable smart truncation to preserve JSON structure and avoid cumulative information loss
-        output_dir = str(Path(input.details_path).parent)
+        
+        # Get trajectory output directory from learning_config
+        trajectory_output_dir = self.learning_config.get("trajectory_output_dir")
+        if trajectory_output_dir:
+            output_dir = trajectory_output_dir
+        else:
+            output_dir = str(Path(input.details_path).parent)
         
         # Get compression parameters from learning_config or fall back to None (uses settings)
         max_arg_length = self.learning_config.get("max_tool_arg_length")

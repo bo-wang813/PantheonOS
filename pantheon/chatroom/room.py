@@ -362,7 +362,7 @@ class ChatRoom(ToolSet):
             # Save default template to memory for this chat
             extra_data["team_template"] = team_template_dict
             if save_to_memory:
-                await run_func(self.memory_manager.save)
+                memory.mark_dirty()
                 logger.info(f"Saved default template to memory for chat {chat_id}")
         else:
             logger.info(
@@ -381,7 +381,7 @@ class ChatRoom(ToolSet):
                     team_config.source_path = original_template.source_path
                     # Update memory with source_path for future loads
                     team_template_dict["source_path"] = original_template.source_path
-                    await run_func(self.memory_manager.save)
+                    memory.mark_dirty()
                     logger.info(f"Updated memory with source_path: {original_template.source_path}")
             except Exception as e:
                 logger.debug(f"Could not look up source_path for template {team_config.id}: {e}")
@@ -488,7 +488,11 @@ class ChatRoom(ToolSet):
                 del memory.extra_data["active_agent"]
             
             if save_to_memory:
-                await run_func(self.memory_manager.save)
+                # Mark memory as dirty to trigger delayed auto-persistence
+                # This is much faster than saving all chats immediately
+                memory.mark_dirty()
+                # Optionally: use save_one for immediate persistence of just this chat
+                # await run_func(self.memory_manager.save_one, chat_id)
 
             # Clear cached team (force recreation next time)
             if chat_id in self.chat_teams:
@@ -757,7 +761,7 @@ class ChatRoom(ToolSet):
         """
         try:
             await run_func(self.memory_manager.delete_memory, chat_id)
-            await run_func(self.memory_manager.save)
+            # File is deleted immediately by delete_memory, no need for save()
             return {"success": True, "message": "Chat deleted successfully"}
         except Exception as e:
             logger.error(f"Error deleting chat: {e}")
@@ -867,6 +871,59 @@ class ChatRoom(ToolSet):
             }
 
     @tool
+    async def revert_to_message(self, chat_id: str, message_id: str) -> dict:
+        """Revert chat memory to a specific message by ID.
+        
+        This will delete the message with the given ID and all subsequent messages.
+        The revert operation only affects conversation memory and does NOT revert
+        file changes or other external states.
+        
+        Args:
+            chat_id: The ID of the chat.
+            message_id: The ID of the message to revert to (inclusive deletion).
+            
+        Returns:
+            A dictionary with:
+            - success: Whether the operation was successful
+            - message: Status message
+            - reverted_content: Content of the deleted user message (if applicable)
+        """
+        try:
+            memory = await run_func(self.memory_manager.get_memory, chat_id)
+            
+            # Find the index of the message with the given ID
+            message_index = None
+            reverted_message = None
+            
+            for idx, msg in enumerate(memory._messages):
+                if msg.get("id") == message_id:
+                    message_index = idx
+                    # Store the full message for frontend to parse
+                    if msg.get("role") == "user":
+                        reverted_message = msg
+                    break
+            
+            if message_index is None:
+                return {
+                    "success": False,
+                    "message": f"Message with ID '{message_id}' not found in chat history"
+                }
+            
+            # Perform the revert
+            await run_func(memory.revert_to_message, message_index)
+            
+            logger.info(f"Reverted chat {chat_id} to state before message {message_id} (index {message_index})")
+            
+            return {
+                "success": True,
+                "message": f"Successfully reverted to state before message {message_id}",
+                "reverted_message": reverted_message
+            }
+        except Exception as e:
+            logger.error(f"Error reverting chat {chat_id}: {e}")
+            return {"success": False, "message": str(e)}
+
+    @tool
     async def attach_hooks(
         self,
         chat_id: str,
@@ -913,8 +970,8 @@ class ChatRoom(ToolSet):
             new_name = await chat_name_generator.generate_or_update_name(memory)
             if new_name and new_name != memory.name:
                 memory.name = new_name
-                # Save memory with updated name
-                await run_func(self.memory_manager.save)
+                # Save only this chat's memory
+                await run_func(self.memory_manager.save_one, memory.id)
                 logger.debug(f"Chat renamed in background to: {new_name}")
         except Exception as e:
             logger.error(f"Background chat rename failed: {e}")
@@ -1005,7 +1062,7 @@ class ChatRoom(ToolSet):
                 memory.extra_data["running"] = False
                 memory.extra_data["last_activity_date"] = datetime.now().isoformat()
                 try:
-                    await run_func(self.memory_manager.save)
+                    await run_func(self.memory_manager.save_one, chat_id)
                 except Exception as e:
                     logger.error(f"Failed to save memory on cleanup: {e}")
 
@@ -1152,7 +1209,8 @@ class ChatRoom(ToolSet):
                 memory.extra_data["suggestions_generated_at"] = (
                     datetime.now().isoformat()
                 )
-                await run_func(self.memory_manager.save)
+                # Use delayed save for caching (non-critical)
+                memory.mark_dirty()
 
             logger.debug(f"Generated {len(suggestions)} suggestions for chat {chat_id}")
 
@@ -1382,7 +1440,7 @@ class ChatRoom(ToolSet):
                     break
 
             memory.extra_data["team_template"] = team_template
-            await run_func(self.memory_manager.save)
+            memory.mark_dirty()
 
             logger.info(
                 f"Set model for agent '{agent_name}' in chat '{chat_id}': {model} -> {resolved_models}"
@@ -1421,7 +1479,7 @@ class ChatRoom(ToolSet):
             
             # Save memory to persist compression changes
             if result.get("success"):
-                await run_func(self.memory_manager.save)
+                await run_func(self.memory_manager.save_one, chat_id)
                 logger.info(f"Manual compression completed for chat {chat_id}")
             
             return result

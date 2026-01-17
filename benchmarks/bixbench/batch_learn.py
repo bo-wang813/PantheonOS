@@ -61,6 +61,8 @@ async def batch_learn(
     log_level: str = "INFO",
     cooldown_seconds: int = 10,
     filter_ids: List[str] | None = None,
+    supervised: bool = False,
+    inject_notebook: bool = False,
     **config_overrides,
 ):
     """
@@ -76,6 +78,8 @@ async def batch_learn(
         filter_ids: Optional list of capsule IDs to process (e.g., ["bix-1", "bix-2"]). 
                    If provided, only memory files matching these IDs will be processed.
                    Can be full filenames (e.g., "bix-1_memory.json") or just IDs (e.g., "bix-1").
+        supervised: Enable supervised learning (Level 1: with grading)
+        inject_notebook: Inject GT notebook for supervised learning (Level 2)
         **config_overrides: Additional learning config overrides
             - max_tool_arg_length: Max chars for tool args in compression
             - max_tool_output_length: Max chars for tool output in compression
@@ -113,9 +117,33 @@ async def batch_learn(
         logger.error(f"Memory directory not found: {memory_dir}")
         return
     
-    # Default output to memory_dir/skillbook_batch.json
-    if output_skillbook is None:
-        output_skillbook = str(memory_path / "skillbook_batch.json")
+    # Auto-organize outputs based on supervised flags
+    if supervised:
+        if inject_notebook:
+            # Supervised with GT notebook
+            learning_subdir = "learning/notebook_supervised"
+            level_name = "notebook_supervised"
+            print(f"📁 Notebook-supervised learning: outputs → {memory_dir}/learning/notebook_supervised/")
+        else:
+            # Supervised without GT notebook
+            learning_subdir = "learning/supervised"
+            level_name = "supervised"
+            print(f"📁 Supervised learning: outputs → {memory_dir}/learning/supervised/")
+    else:
+        # Unsupervised learning
+        learning_subdir = "learning/unsupervised"
+        level_name = "unsupervised"
+        print(f"📁 Unsupervised learning: outputs → {memory_dir}/learning/unsupervised/")
+    
+    learning_dir = memory_path / learning_subdir
+    learning_dir.mkdir(parents=True, exist_ok=True)
+    
+    supervised_output_dir = learning_dir
+    trajectory_output_dir = learning_dir
+    
+    # Auto-set skillbook path if not specified
+    if not output_skillbook:
+        output_skillbook = str(learning_dir / f"skillbook_{level_name}.json")
     
     # Find all memory JSON files
     memory_files = list(memory_path.glob("**/*_memory.json"))
@@ -175,8 +203,59 @@ async def batch_learn(
     else:
         print(f"📂 Found {len(unique_files)} memory files in {memory_dir}")
     print(f"🔧 Learning mode: {learning_mode}")
+    
+    # Supervised learning setup
+    results_data = None
+    groundtruth_dir = None
+    if supervised:
+        print(f"🎓 Supervised learning: {'Level 2 (with notebook)' if inject_notebook else 'Level 1 (basic)'}")
+        
+        # Load results file to get grading and capsule info
+        results_file = None
+        # Search in this order: regrade (most accurate) -> summary (standard) -> legacy patterns
+        for pattern in ["regrade_report.json", "summary.json", "*_regrade.json", "results_*.json"]:
+            matches = list(memory_path.glob(pattern))
+            if matches:
+                results_file = matches[0]
+                break
+        
+        if results_file:
+            print(f"📊 Loading results from: {results_file.name}")
+            with open(results_file) as f:
+                results_data = json.load(f)
+        else:
+            # CRITICAL: User explicitly requested supervised learning but we can't find grading data
+            print(f"\n❌ ERROR: Supervised learning requested but no grading data found!")
+            print(f"   Expected files in {memory_path}:")
+            print(f"   - regrade_report.json (preferred)")
+            print(f"   - summary.json (standard)")
+            print(f"   - *_regrade.json (legacy)")
+            print(f"   - results_*.json (legacy)")
+            print(f"\n   Found files:")
+            for f in sorted(memory_path.glob("*.json"))[:10]:
+                print(f"   - {f.name}")
+            print(f"\n💡 Solutions:")
+            print(f"   1. Ensure the results directory contains grading data")
+            print(f"   2. Run without --supervised for unsupervised learning")
+            print(f"   3. Run benchmark first to generate summary.json")
+            raise FileNotFoundError(
+                f"No grading data found in {memory_path} for supervised learning. "
+                f"Cannot proceed with --supervised flag."
+            )
+        
+        # Set groundtruth directory for notebook injection
+        if inject_notebook and supervised:
+            gt_dir = Path(__file__).parent / "groundtruth"
+            if gt_dir.exists():
+                groundtruth_dir = gt_dir
+                print(f"📁 GT notebook directory: {gt_dir}")
+            else:
+                print(f"⚠️  Warning: GT directory not found at {gt_dir}")
+                print(f"   Level 2 will fallback to Level 1 for all capsules")
+
+    
     if learning_mode == "team":
-        print(f"🏷️  Team ID: {team_id}")
+        print(f"🏷️  Team ID: {config_overrides.get('team_id', 'skill_learning_team')}")
     
     # Initialize skillbook with dedicated output path
     output_path = Path(output_skillbook)
@@ -197,6 +276,9 @@ async def batch_learn(
     
     # Apply all kwargs as config overrides
     learning_config.update(config_overrides)
+    
+    # Always pass trajectory output directory (all modes use subdirectories now)
+    learning_config["trajectory_output_dir"] = str(trajectory_output_dir)
     
     # Initialize learning components with config
     reflector = Reflector(
@@ -280,13 +362,53 @@ async def batch_learn(
                 print(f"  ⚠️ No messages found, skipping")
                 continue
             
-            # Create learning input
-            turn_id = memory_file.stem
+            # Supervised learning: augment memory with grading
+            actual_memory_file = memory_file
+            if supervised and results_data:
+                try:
+                    from benchmarks.bixbench.supervised_learn import (
+                        append_grading_to_memory,
+                        find_gt_notebook,
+                    )
+                    
+                    # Find capsule result
+                    capsule_result = None
+                    results_list = results_data.get("results", [])
+                    for result in results_list:
+                        if result.get("capsule_id") == capsule_id:
+                            capsule_result = result
+                            break
+                    
+                    if capsule_result and "grading" in capsule_result:
+                        # Find GT notebook if needed
+                        gt_notebook_path = None
+                        if inject_notebook and groundtruth_dir:
+                            gt_notebook_path = find_gt_notebook(groundtruth_dir, capsule_id, memory_path)
+
+                        
+                        # Augment memory
+                        actual_memory_file = append_grading_to_memory(
+                            memory_path=memory_file,
+                            capsule_result=capsule_result,
+                            inject_notebook=inject_notebook,
+                            gt_notebook_path=gt_notebook_path,
+                            output_dir=supervised_output_dir,  # Use auto-determined directory
+                        )
+                        print(f"  ✓ Augmented memory with grading" + 
+                              (" + GT notebook" if gt_notebook_path else ""))
+                    else:
+                        print(f"  ⚠️  No grading found for {capsule_id}, skipping augmentation")
+                except Exception as e:
+                    print(f"  ⚠️  Failed to augment memory: {e}")
+                    logger.exception(f"Supervised learning error for {capsule_id}")
+            
+            # Create learning input (use augmented memory if supervised)
+            turn_id = actual_memory_file.stem
             learning_input = LearningInput(
                 turn_id=turn_id,
                 agent_name=agent_name,
-                details_path=str(memory_file),
-                chat_id=capsule_id or memory_file.parent.name,
+                details_path=str(actual_memory_file),
+                chat_id=capsule_id or actual_memory_file.parent.name,
             )
             
             # Submit to pipeline
@@ -317,16 +439,24 @@ async def batch_learn(
     
     # Final wait to ensure all processing is complete
     print(f"\n⏳ Final check - ensuring all tasks are complete...")
-    wait_count = 0
-    max_wait = 30
-    while not pipeline._queue.empty() and wait_count < max_wait:
-        await asyncio.sleep(1)
-        wait_count += 1
-        if wait_count % 5 == 0:
-            print(f"  Queue size: {pipeline._queue.qsize()}, waited {wait_count}s")
+    print(f"   Queue size: {pipeline._queue.qsize()}")
     
-    # Give some extra time for final processing
-    await asyncio.sleep(5)
+    # Wait until queue is truly empty (no time limit, but report progress)
+    wait_count = 0
+    last_size = pipeline._queue.qsize()
+    
+    while not pipeline._queue.empty():
+        await asyncio.sleep(5)
+        wait_count += 5
+        current_size = pipeline._queue.qsize()
+        
+        # Report progress every 30s or when queue size changes
+        if wait_count % 30 == 0 or current_size != last_size:
+            print(f"   Queue size: {current_size}/{last_size + current_size} processed, waited {wait_count}s")
+            last_size = current_size
+    
+    print(f"   ✓ All tasks processed (waited {wait_count}s total)")
+    
     
     # Stop pipeline and save
     await pipeline.stop()
@@ -437,6 +567,18 @@ Examples:
              "Useful for continuing failed batch learning runs.",
     )
     
+    # Supervised learning parameters
+    parser.add_argument(
+        "--supervised",
+        action="store_true",
+        help="Enable supervised learning (Level 1: augment memory with grading + GT answers)",
+    )
+    parser.add_argument(
+        "--inject-notebook",
+        action="store_true",
+        help="Inject GT notebook for supervised learning (Level 2: requires --supervised)",
+    )
+    
     # Optional config overrides via key=value pairs
     parser.add_argument(
         "--config",
@@ -479,6 +621,8 @@ Examples:
         log_level=args.log_level,
         cooldown_seconds=args.cooldown,
         filter_ids=args.ids,
+        supervised=args.supervised,
+        inject_notebook=args.inject_notebook,
         **config_overrides,
     ))
 

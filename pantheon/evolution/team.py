@@ -164,6 +164,7 @@ class EvolutionTeam:
         max_iterations: Optional[int] = None,
         initial_path: Optional[str] = None,
         resume_from: Optional[str] = None,
+        progress_callback: Optional[callable] = None,
         **kwargs,
     ) -> EvolutionResult:
         """
@@ -176,6 +177,7 @@ class EvolutionTeam:
             max_iterations: Override config max_iterations
             initial_path: Path for loading initial codebase (if initial_code is path)
             resume_from: Path to resume from (directory with evolution_state.json)
+            progress_callback: Optional callback(iteration: int, best_score: float) for progress updates
             **kwargs: Additional arguments
 
         Returns:
@@ -184,6 +186,7 @@ class EvolutionTeam:
         max_iterations = max_iterations or self.config.max_iterations
         self.objective = objective
         self.evaluator_code = evaluator_code
+        self.progress_callback = progress_callback  # Store callback for use in checkpoints
 
         # Initialize result
         result = EvolutionResult(
@@ -331,6 +334,13 @@ class EvolutionTeam:
                             f"programs={stats['total_programs']} ==="
                         )
 
+                    # Trigger progress callback on every iteration (independent of checkpoint)
+                    if self.progress_callback:
+                        self.progress_callback(
+                            start_iteration + completed_iterations,
+                            best_score
+                        )
+
                     # Periodic checkpoint
                     if self.config.db_path and completed_iterations % self.config.checkpoint_interval == 0:
                         self._save_checkpoint(
@@ -391,6 +401,10 @@ class EvolutionTeam:
                             f"avg={stats['avg_fitness']:.4f}, programs={stats['total_programs']} ---"
                         )
 
+                    # Trigger progress callback on every iteration (independent of checkpoint)
+                    if self.progress_callback:
+                        self.progress_callback(iteration, best_score)
+
                     # Periodic migration
                     if iteration > 0 and iteration % self.config.migration_interval == 0:
                         self.database.migrate()
@@ -441,6 +455,11 @@ class EvolutionTeam:
         if self.config.db_path:
             # Compute final iteration number
             final_iteration = start_iteration + len(result.iteration_results) - 1
+            
+            # Trigger final progress callback
+            if self.progress_callback:
+                self.progress_callback(final_iteration, best_score)
+            
             self._save_checkpoint(
                 self.config.db_path,
                 final_iteration,
@@ -476,6 +495,10 @@ class EvolutionTeam:
             "generations_without_improvement": generations_without_improvement,
             "objective": self.objective,
             "evaluator_code": self.evaluator_code,
+            "max_iterations": self.config.max_iterations,
+            "num_islands": self.config.num_islands,
+            "mutator_model": self.config.mutator_model,
+            "created_at": time.time(),  # For session restoration
         }
 
         state_path = Path(path) / "evolution_state.json"

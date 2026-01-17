@@ -178,7 +178,7 @@ class ReplCompleter(Completer):
         ("/tokens", "Token usage analysis"),
         ("/save", "Save conversation"),
         ("/revert", "Revert memory to previous state"),
-        ("/clear", "Clear/new chat"),
+        ("/clear", "Clear conversation (with confirmation)"),
         ("/exit", "Exit REPL"),
         # Chat management
         ("/new", "New chat session"),
@@ -192,10 +192,8 @@ class ReplCompleter(Completer):
         # MCP server management
         ("/mcp", "MCP servers: /mcp [start|stop|add|remove]"),
         # Display modes
-        ("/verbose", "Verbose output mode"),
-        ("/v", "Verbose (short)"),
-        ("/compact", "Compact output mode"),
-        ("/c", "Compact (short)"),
+        ("/v", "Verbose mode"),
+        ("/c", "Compact mode"),
         # Context management
         ("/compress", "Force context compression"),
     ]

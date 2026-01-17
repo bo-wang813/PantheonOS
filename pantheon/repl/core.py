@@ -180,8 +180,9 @@ class Repl(ReplUI):
         self._status_update_requested = False
         self._last_status_update = 0.0
         
-        # Pending user approval for notify_user with interrupt=True
+        # Pending user approval for notify_user        # Pending operations state
         self._pending_approval: dict | None = None
+        self._pending_clear_confirmation: bool = False  # For /clear confirmation
 
     def _create_chatroom_from_agent(
         self, agent: Agent | Team, memory_dir: str
@@ -710,6 +711,36 @@ class Repl(ReplUI):
             return
 
         self._add_to_history(current_message)
+        
+        # Check if we're waiting for /clear confirmation
+        if self._pending_clear_confirmation:
+            self._pending_clear_confirmation = False
+            confirmation = current_message.strip().lower()
+            
+            if confirmation == "yes":
+                # Confirmed - proceed with deletion
+                self.console.clear()
+                self.task_ui_renderer.reset()
+                
+                # Delete old chat and create new
+                if self._chat_id:
+                    await self._chatroom.delete_chat(self._chat_id)
+                result = await self._chatroom.create_chat("repl-session")
+                self._chat_id = result["chat_id"]
+                self._current_agent_name = None
+                self._last_printed_agent = None
+                
+                # Reset status bar to first agent
+                if self.prompt_app and self._team and self._team.agents:
+                    first_agent_name = list(self._team.agents.keys())[0]
+                    self.prompt_app.update_agent(first_agent_name)
+                
+                await self.print_greeting()
+                self.console.print("[green]✓[/green] New conversation started.\n")
+            else:
+                # Cancelled
+                self.console.print("[dim]Cancelled. Conversation preserved.[/dim]\n")
+            return
 
         # Handle commands
         cmd = current_message.strip()
@@ -1818,21 +1849,25 @@ class Repl(ReplUI):
             )
 
     async def _handle_clear(self):
-        """Clear current chat and create new one."""
-        self.console.clear()
-        self.task_ui_renderer.reset()
-        # Delete old chat and create new
-        if self._chat_id:
-            await self._chatroom.delete_chat(self._chat_id)
-        result = await self._chatroom.create_chat("repl-session")
-        self._chat_id = result["chat_id"]
-        self._current_agent_name = None
-        self._last_printed_agent = None
-        # Reset status bar to first agent
-        if self.prompt_app and self._team and self._team.agents:
-            first_agent_name = list(self._team.agents.keys())[0]
-            self.prompt_app.update_agent(first_agent_name)
-        await self.print_greeting()
+        """Clear screen and delete current chat (with confirmation).
+        
+        This command will:
+        1. Clear the terminal screen
+        2. Delete the current conversation memory
+        3. Create a new chat session
+        
+        Requires confirmation to prevent accidental data loss.
+        """
+        # Show warning and set pending state
+        self.console.print()
+        self.console.print("[yellow]⚠️  Warning:[/yellow] This will delete the current conversation history.")
+        self.console.print("[dim]To create a new chat without deleting history, use /new instead.[/dim]")
+        self.console.print()
+        self.console.print("[bold]Type 'yes' to confirm, or anything else to cancel:[/bold]")
+        self.console.print()
+        
+        # Set pending confirmation state
+        self._pending_clear_confirmation = True
 
     def _handle_save_command(self, command: str):
         """Handle /save command."""

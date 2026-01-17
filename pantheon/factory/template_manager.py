@@ -497,12 +497,10 @@ class TemplateManager:
             return {"success": False, "error": str(e)}
 
     def _parse_template_file_path(self, file_path: str) -> Tuple[str, str]:
-        """Validate and split template file path (type/id.md)."""
+        """Validate and split template file path (xx/xx/id.md)."""
         parts = file_path.split("/")
-        if len(parts) != 2:
-            raise ValueError("Invalid file_path format. Expected 'type/id.md'")
 
-        file_type, filename = parts
+        file_type, filename = parts[0], "/".join(parts[1:])
         if file_type not in {"teams", "agents"}:
             raise ValueError(f"Unknown file type: {file_type}")
 

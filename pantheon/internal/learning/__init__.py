@@ -67,10 +67,11 @@ def create_learning_resources(
     # Determine feature flags from config
     _enable_learning = _config.get("enable_learning", False)
     _enable_injection = _config.get("enable_injection", _enable_learning)
+    _enable_dynamic_injection = _config.get("enable_dynamic_injection", False)
     
-    # If both disabled, return early
-    if not _enable_learning and not _enable_injection:
-        logger.info("Learning and injection both disabled")
+    # If all three disabled, return early
+    if not _enable_learning and not _enable_injection and not _enable_dynamic_injection:
+        logger.info("Learning and injection all disabled")
         return None, None
     
     # Create skillbook (shared by both features)
@@ -110,7 +111,9 @@ def create_learning_resources(
     if _enable_learning:
         features.append(f"learning({_config.get('mode', 'pipeline')})")
     if _enable_injection:
-        features.append("injection")
+        features.append("static_injection")
+    if _enable_dynamic_injection:
+        features.append("dynamic_injection")
     logger.info(f"ACE enabled [{', '.join(features)}]: {len(skillbook.skills())} skills loaded")
     
     return skillbook, pipeline

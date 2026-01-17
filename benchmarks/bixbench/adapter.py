@@ -53,12 +53,14 @@ class PantheonBixBenchAdapter:
         workspace_path: str = None,
         learning_config: dict = None,
         team: str = "default",
+        injection_mode: str = "auto",
     ):
         self.model_name = model_name
         self.enable_learning = enable_learning
         self.workspace_path = workspace_path or str(Path.cwd())
         self.learning_config = learning_config  # User-provided learning config
         self.team_name = team
+        self.injection_mode = injection_mode
         self._team = None
         self._endpoint = None
         self._learning_plugin = None
@@ -96,12 +98,30 @@ class PantheonBixBenchAdapter:
             settings = get_settings()
             learning_config = settings.get_learning_config().copy()
             
-            # Enable learning/injection if user set enable_learning=True
+            # Apply injection mode settings
+            # Note: enable_learning, enable_injection, and enable_dynamic_injection are independent:
+            # - enable_learning: Auto-learn from conversations (post-run learning pipeline)
+            # - enable_injection: Static skill injection (into agent instructions)
+            # - enable_dynamic_injection: Dynamic skill injection (context-based, per message)
             if self.enable_learning:
-                learning_config["enable_learning"] = True
-                learning_config["enable_injection"] = True          # Static injection (all skills)
-                learning_config["enable_dynamic_injection"] = False  # Disable dynamic injection for stable evaluation
-                learning_config["static_injection_sections"] = ["*"]  # Inject all sections
+                # For benchmarks: disable auto-learning, only use injection
+                # Auto-learning would modify the skillbook during evaluation, which we don't want
+                learning_config["enable_learning"] = False
+                learning_config["enable_injection"] = False
+                
+                # Configure based on injection mode
+                if self.injection_mode == "static":
+                    learning_config["enable_injection"] = True
+                    learning_config["enable_dynamic_injection"] = False
+                    learning_config["static_injection_sections"] = ["*"]
+                elif self.injection_mode == "dynamic":
+                    learning_config["enable_injection"] = False
+                    learning_config["enable_dynamic_injection"] = True
+                    learning_config["static_injection_sections"] = []
+                else:  # "auto" mode - default to dynamic
+                    learning_config["enable_injection"] = False
+                    learning_config["enable_dynamic_injection"] = True
+                    learning_config["static_injection_sections"] = []
             
             # Merge user-provided config (takes precedence)
             if self.learning_config:
@@ -539,6 +559,7 @@ class PantheonBixBenchAdapter:
         run_name: str = "baseline",
         notebook_json: dict = None,
         team: str = "default",
+        injection_mode: str = "auto",
     ) -> dict:
         """
         Generate a trajectory record in official BixBench format.
@@ -550,6 +571,7 @@ class PantheonBixBenchAdapter:
             run_name: Run identifier (baseline, with_learning, etc.)
             notebook_json: Optional notebook JSON if available
             team: Team used for the run
+            injection_mode: Injection mode used for the run
             
         Returns:
             Dict in official BixBench trajectory format
@@ -565,4 +587,5 @@ class PantheonBixBenchAdapter:
             "run_name": run_name,
             "nb": notebook_json,
             "team": team,
+            "injection_mode": injection_mode,
         }

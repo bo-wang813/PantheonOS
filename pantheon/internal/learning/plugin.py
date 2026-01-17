@@ -72,7 +72,7 @@ class LearningPlugin(TeamPlugin):
         enable_injection: Enable static skill injection (default: False)
         enable_dynamic_injection: Enable dynamic skill injection (default: False)
         enable_learning: Enable trajectory learning (default: False)
-        dynamic_injection_top_k: Number of skills for dynamic injection (default: 5)
+        dynamic_injection_top_k: Number of skills for dynamic injection (default: 50)
     
     Example:
         # Get global singleton
@@ -97,7 +97,7 @@ class LearningPlugin(TeamPlugin):
         self.enable_injection = config.get("enable_injection", False)
         self.enable_dynamic_injection = config.get("enable_dynamic_injection", False)
         self.enable_learning = config.get("enable_learning", False)
-        self.dynamic_injection_top_k = config.get("dynamic_injection_top_k", 10)
+        self.dynamic_injection_top_k = config.get("dynamic_injection_top_k", 50)
     
     async def initialize(self):
         """

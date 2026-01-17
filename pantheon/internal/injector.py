@@ -57,7 +57,7 @@ class SkillInjector(ContextInjector):
     filtering out skills that are already in the initial (static) injection.
     """
 
-    def __init__(self, skillbook_toolset: "SkillbookToolSet", top_k: int = 10):
+    def __init__(self, skillbook_toolset: "SkillbookToolSet", top_k: int = 20):
         """Initialize SkillInjector.
         
         Args:
