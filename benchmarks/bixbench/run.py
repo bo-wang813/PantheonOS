@@ -182,7 +182,9 @@ async def run_benchmark(
     learning_config: dict = None,
     team: str = "default",
     injection_mode: str = "auto",
+    injection_mode: str = "auto",
     model_name: str = "gemini/gemini-3-flash-preview",
+    capsules_filter: str = None,
 ):
     """Run BixBench benchmark with Pantheon agent.
     
@@ -197,6 +199,7 @@ async def run_benchmark(
         team: Team template ID to use (default: default)
         injection_mode: Injection mode (static, dynamic, auto)
         model_name: Model name to use (e.g., gemini/gemini-3-flash-preview)
+        capsules_filter: Comma-separated list of capsule IDs to run (e.g. "bix-13,bix-14")
     """
     # Setup logging to file
     log_file = setup_logging(log_level=log_level)
@@ -219,6 +222,16 @@ async def run_benchmark(
     
     # Load all capsules (don't apply limit yet in continue mode)
     all_capsules = index["capsules"]
+    all_capsules = index["capsules"]
+    
+    # Apply capsule filter if specified
+    if capsules_filter:
+        target_ids = [id.strip() for id in capsules_filter.split(",")]
+        all_capsules = [c for c in all_capsules if c["short_id"] in target_ids]
+        if not all_capsules:
+            print(f"❌ No capsules found matching filter: {capsules_filter}")
+            return
+            
     run_name = "with_learning" if enable_learning else "baseline"
     
     # Handle continue mode
@@ -261,6 +274,9 @@ async def run_benchmark(
         # Find capsules that were attempted but failed
         attempted_capsules = {r.get("capsule_id") for r in previous_results}
         failed_capsules = {r.get("capsule_id") for r in previous_results if r.get("status") == "error"}
+        
+        # Remove failed capsules from completed_capsules so they are re-run
+        completed_capsules -= failed_capsules
         
         # Separate capsules into untried and failed
         untried = [c for c in all_capsules if c["short_id"] not in attempted_capsules]
@@ -625,6 +641,8 @@ def main():
                         help="Injection mode: static (all skills upfront), dynamic (context-based), auto (config defaults)")
     parser.add_argument("--model", default="gemini/gemini-3-flash-preview",
                         help="Model name to use (default: gemini/gemini-3-flash-preview)")
+    parser.add_argument("--capsules", default=None,
+                        help="Comma-separated list of capsule IDs to run (e.g. bix-13)")
     
     args = parser.parse_args()
     
@@ -638,6 +656,7 @@ def main():
         team=args.team,
         injection_mode=args.injection_mode,
         model_name=args.model,
+        capsules_filter=args.capsules,
     ))
 
 

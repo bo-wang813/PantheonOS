@@ -737,14 +737,29 @@ class ChatRoom(ToolSet):
         }
 
     @tool
-    async def create_chat(self, chat_name: str | None = None) -> dict:
+    async def create_chat(
+        self, 
+        chat_name: str | None = None,
+        project_name: str | None = None,
+        workspace_path: str | None = None,
+    ) -> dict:
         """Create a new chat.
 
         Args:
             chat_name: The name of the chat.
+            project_name: Optional project name for grouping.
+            workspace_path: Optional workspace directory path.
         """
         memory = await run_func(self.memory_manager.new_memory, chat_name)
         memory.extra_data["last_activity_date"] = datetime.now().isoformat()
+        
+        # Set project metadata if provided
+        if project_name:
+            project = {"name": project_name}
+            if workspace_path:
+                project["workspace_path"] = workspace_path
+            memory.extra_data["project"] = project
+        
         return {
             "success": True,
             "message": "Chat created successfully",
@@ -789,6 +804,7 @@ class ChatRoom(ToolSet):
                         "last_activity_date": memory.extra_data.get(
                             "last_activity_date", None
                         ),
+                        "project": memory.extra_data.get("project", None),
                     }
                 )
 
@@ -869,6 +885,54 @@ class ChatRoom(ToolSet):
                 "success": False,
                 "message": str(e),
             }
+
+    @tool
+    async def set_chat_project(
+        self,
+        chat_id: str,
+        project_name: str | None = None,
+        workspace_path: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Set or update project metadata for a chat.
+
+        Args:
+            chat_id: The ID of the chat.
+            project_name: Project name (None to remove project).
+            workspace_path: Optional workspace directory path.
+            **kwargs: Additional project metadata (color, icon, etc.)
+
+        Returns:
+            A dictionary with success status and message.
+        """
+        try:
+            memory = await run_func(self.memory_manager.get_memory, chat_id)
+
+            if project_name is None:
+                # Remove project metadata
+                memory.extra_data.pop("project", None)
+                message = "Project metadata removed"
+            else:
+                # Create or update project object
+                project = memory.extra_data.get("project", {})
+                project["name"] = project_name
+
+                if workspace_path is not None:
+                    project["workspace_path"] = workspace_path
+
+                # Support future extensions (color, icon, etc.)
+                for key, value in kwargs.items():
+                    if value is not None:
+                        project[key] = value
+
+                memory.extra_data["project"] = project
+                message = f"Project '{project_name}' set for chat"
+
+            memory.mark_dirty()
+            return {"success": True, "message": message}
+        except Exception as e:
+            logger.error(f"Error setting chat project: {e}")
+            return {"success": False, "message": str(e)}
 
     @tool
     async def revert_to_message(self, chat_id: str, message_id: str) -> dict:

@@ -20,9 +20,9 @@ def submit_answer(answer: str) -> dict:
         answer: The final answer to the task. Use the string representation for numbers, booleans, or strings (e.g., "1.23", "True", "Mast cells").
     
     Returns:
-        Confirmation of submission.
+        Confirmation of submission with interrupt signal to terminate the session.
     """
-    return {"status": "submitted", "answer": answer}
+    return {"status": "submitted", "answer": answer, "interrupt": True}
 
 class SingleCellBenchmarkAdapter:
     """Adapter to run Single Cell benchmark tasks using Pantheon Team.

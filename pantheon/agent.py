@@ -1449,11 +1449,23 @@ class Agent:
                 await run_func(process_step_message, message)
 
             # If no tool calls, stop conversation
+            # BUT: If we have reasoning content WITHOUT actual content, continue to let the model output its conclusion/tool calls
+            # This handles models that output reasoning in one turn and content/tools in the next
+            # However, if the model outputs both reasoning AND content in the same turn (e.g., Gemini),
+            # we should stop to avoid an unnecessary extra loop that returns empty content
+            has_reasoning = message.get("reasoning_content") and str(message.get("reasoning_content")).strip()
+            has_content = message.get("content") and str(message.get("content")).strip()
+            
+            # Stop if:
+            # 1. No tool calls AND no reasoning (normal completion)
+            # 2. No tool calls AND has reasoning BUT also has content (reasoning + content in same turn)
+            # Continue only if: has reasoning but NO content (waiting for model to output conclusion)
             if not message.get("tool_calls"):
-                break
+                if not has_reasoning or has_content:
+                    break
 
             tool_messages = await self._handle_tool_calls(
-                message["tool_calls"],
+                message.get("tool_calls") or [],
                 context_variables=context_variables,
                 timeout=tool_timeout,
                 check_stop=check_stop,
@@ -1462,7 +1474,7 @@ class Agent:
             # Process tool messages for artifact tracking
             if task_toolset:
                 task_toolset.process_tool_messages(
-                    tool_calls=message["tool_calls"],
+                    tool_calls=message.get("tool_calls") or [],
                     tool_messages=tool_messages,
                     context_variables=context_variables,
                 )

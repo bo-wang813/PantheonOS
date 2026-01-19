@@ -61,10 +61,22 @@ async def batch_learn(
         print(f"❌ Memory directory not found: {memory_dir}")
         return
     
-    # Default output filename with supervised suffix
+    # Auto-organize outputs based on supervised flag
+    if supervised:
+        learning_subdir = "learning/supervised"
+        level_name = "supervised"
+        print(f"📁 Supervised learning: outputs → {memory_dir}/learning/supervised/")
+    else:
+        learning_subdir = "learning/unsupervised"
+        level_name = "unsupervised"
+        print(f"📁 Unsupervised learning: outputs → {memory_dir}/learning/unsupervised/")
+    
+    learning_dir = memory_path / learning_subdir
+    learning_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Auto-set skillbook path if not specified
     if output_skillbook is None:
-        suffix = "_level1" if supervised else "_level0"
-        output_skillbook = str(memory_path / f"skillbook_batch{suffix}.json")
+        output_skillbook = str(learning_dir / f"skillbook_{level_name}.json")
     
     # Find memory files
     memory_files = list(memory_path.glob("**/*_memory.json"))
@@ -122,6 +134,9 @@ async def batch_learn(
     if learning_model is not None:
         learning_config["learning_model"] = learning_model
     
+    # Set trajectory output directory to learning subdirectory
+    learning_config["trajectory_output_dir"] = str(learning_dir)
+    
     learning_config.update(config_overrides)
     
     # Initialize learning components
@@ -135,12 +150,12 @@ async def batch_learn(
     )
     
     # Create pipeline
-    learning_dir = str(memory_path / ".batch_learning")
+    batch_learning_dir = str(learning_dir / ".batch_learning")
     pipeline = LearningPipeline(
         skillbook=skillbook,
         reflector=reflector,
         skill_manager=skill_manager,
-        learning_dir=learning_dir,
+        learning_dir=batch_learning_dir,
         cleanup_after_learning=learning_config.get("cleanup_after_learning", False),
         min_confidence_threshold=learning_config.get("min_confidence_threshold", 0.5),
         min_atomicity_score=learning_config.get("min_atomicity_score", 0.85),

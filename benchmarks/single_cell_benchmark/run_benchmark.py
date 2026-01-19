@@ -121,11 +121,10 @@ You are an expert bioinformatician. Analyze the data and answer the research que
 
 ## IMPORTANT: Execution Rules
 
-1. **NON-INTERACTIVE**: Do NOT ask the user any questions or request approval/feedback. Work autonomously until completion.
+1. **NON-INTERACTIVE**: Do NOT ask the user any questions or request approval/feedback during the analysis. Work autonomously.
 2. **NO USER INTERACTION**: Complete the entire analysis independently without requesting feedback.
-3. **NO INTERRUPTIONS**: Do NOT use `notify_user` tool or request user approval at any point. Never call blocked_on_user or any interrupt operations.
-4. **AUTONOMOUS EXECUTION**: Make all decisions independently. If you encounter issues or uncertainties, proceed with your best judgment without asking.
-5. **FINAL ANSWER ONLY**: Only communicate with the user when providing your final answer using the `submit_answer` tool.
+3. **FINAL ANSWER ONLY**: Only communicate with the user when providing your final answer using the `submit_answer` tool.
+4. **LOOP TERMINATION**: After submitting your answer via `submit_answer`, you MUST end the session. Simply STOP generating any further output (no text, no tool calls). The tool will automatically terminate the session.
 
 ## Environment
 
@@ -249,6 +248,13 @@ def generate_report(results, results_dir, round_name, skillbook_path=None):
     completed = [r for r in results if r.get('status') == 'completed']
     errors = [r for r in results if r.get('status') == 'error']
     
+    # Extract skillbook_path from results if not provided (for continue mode)
+    if skillbook_path is None and results:
+        for r in results:
+            if 'skillbook_path' in r:
+                skillbook_path = r['skillbook_path']
+                break
+    
     report = {
         "round": round_name,
         "timestamp": timestamp,
@@ -260,7 +266,7 @@ def generate_report(results, results_dir, round_name, skillbook_path=None):
         "results": results
     }
     
-    # Add skillbook_path if provided
+    # Add skillbook_path if provided or extracted
     if skillbook_path:
         report["skillbook_path"] = skillbook_path
     
@@ -272,7 +278,13 @@ def generate_report(results, results_dir, round_name, skillbook_path=None):
     md += f"- **Date**: {timestamp}\n"
     md += f"- **Total**: {len(results)}\n"
     md += f"- **Completed**: {len(completed)}\n"
-    md += f"- **Errors**: {len(errors)}\n\n"
+    md += f"- **Errors**: {len(errors)}\n"
+    
+    # Add skillbook info if available
+    if skillbook_path:
+        md += f"- **Skillbook**: {skillbook_path}\n"
+    
+    md += "\n"
     
     md += "## Details\n\n"
     md += "| ID | Type | Status | Answer | Ground Truth | Duration (s) |\n"

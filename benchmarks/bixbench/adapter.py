@@ -40,7 +40,7 @@ def submit_answer(answers: dict) -> dict:
             "message": f"Invalid answer format. Keys should not be quoted strings inside the JSON object. Found malformed keys: {malformed_keys}. Please resubmit with clean keys (e.g., 'q1' instead of '\"q1\"')."
         }
 
-    return {"status": "submitted", "answers": answers, "count": len(answers)}
+    return {"status": "submitted", "answers": answers, "count": len(answers), "interrupt": True}
 
 
 class PantheonBixBenchAdapter:
@@ -134,6 +134,11 @@ class PantheonBixBenchAdapter:
             learning_config=learning_config,
             enable_mcp=False,  # Disable MCP for benchmark (simpler)
         )
+        
+        # Override model directly on agents
+        if self.model_name:
+            for agent in team.team_agents:
+                agent.models = [self.model_name]
         
         # Register BixBench-specific tools on leader agent
         leader_agent = team.team_agents[0]
@@ -304,6 +309,14 @@ class PantheonBixBenchAdapter:
                         print(f"    [{step_count[0]:02d}] 💬 {agent_name}: {preview}")
                     else:
                         print(f"    [{step_count[0]:02d}] 💬 {agent_name}: (no content)")
+                        # Debug: print other fields if content is missing
+                        keys_to_show = [k for k in msg.keys() if k not in ["role", "content", "agent_name", "type"]]
+                        if keys_to_show:
+                            print(f"      Debugging keys: {keys_to_show}")
+                            for k in keys_to_show:
+                                val = msg.get(k)
+                                val_str = truncate_value(val, max_len=100)
+                                print(f"      - {k}: {val_str}")
             else:
                 print(f"    [{step_count[0]:02d}] 📝 {agent_name} ({role})")
         

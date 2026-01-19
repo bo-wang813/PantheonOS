@@ -246,7 +246,7 @@ async def regrade_run(run_dir: str, model: str = "gemini/gemini-3-flash-preview"
     import json
     from pathlib import Path
     from pantheon.agent import Agent
-    from pantheon.utils.log import temporary_log_level
+    from pantheon.utils.log import temporary_log_level, setup_file_logging, logger
     
     # Resolve run path
     run_path = Path(run_dir)
@@ -258,6 +258,14 @@ async def regrade_run(run_dir: str, model: str = "gemini/gemini-3-flash-preview"
     
     if not run_path.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
+    
+    # Setup logging to file
+    log_file = setup_file_logging(
+        log_dir=Path(".pantheon/logs/regrade"),
+        level="DEBUG",
+        session_name="regrade",
+    )
+    print(f"📝 Logs: {log_file}")
     
     # Load summary
     summary_file = run_path / "summary.json"
@@ -317,7 +325,12 @@ async def regrade_run(run_dir: str, model: str = "gemini/gemini-3-flash-preview"
    - Example: Predicted "0.000019" vs Target "1.9E-5" → CORRECT
    - Example: Predicted "2E-04" vs Target "0.0002" → CORRECT
 
-4. **Tolerance**: Accept answers within 5% relative error
+4. **Integer/Count Precision**:
+   - If Target looks like an integer count (e.g., "166", "42"), require stricter precision (< 1% error).
+    - Example: Predicted "160" vs Target "166" → INCORRECT (~3.6% error, too high for count)
+    - Example: Predicted "1000" vs Target "1005" → CORRECT (0.5% error, acceptable approximation)
+
+5. **General Tolerance (Floats)**: Accept answers within 5% relative error
    - Formula: |predicted - target| / |target| < 0.05
    - Example: Predicted "0.0501" vs Target "0.05" → CORRECT (2% error)
    - Example: Predicted "2.2638" vs Target "(1.50,1.54)" → INCORRECT (outside range)
@@ -350,33 +363,67 @@ Predicted Answer: {q['predicted'] if q['predicted'] else 'NO ANSWER'}
     
     grading_prompt += """
 
-IMPORTANT: Output ONLY a valid JSON object mapping question_id to grade.
-Use "correct" or "incorrect" as values.
-Example: {"bix-1-q1": "correct", "bix-1-q2": "incorrect"}
+IMPORTANT RESPONSE FORMAT INSTRUCTIONS:
+1. Output ONLY a valid raw JSON object.
+2. Do NOT use markdown code blocks (e.g. ```json).
+3. Do NOT include any reasoning, explanation, or conversational text.
+4. The output must start with '{' and end with '}'.
+
+Example Output:
+{"bix-1-q1": "correct", "bix-1-q2": "incorrect"}
 
 Output:"""
 
+    logger.debug(f"Grading prompt length: {len(grading_prompt)}")
+    
     # Create grading agent using Pantheon Agent
     grading_agent = Agent(
         name="BixBenchGrader",
         model=model,
-        instructions="You are a precise answer grader. Compare predicted and target answers for semantic equivalence.",
+        instructions="You are a precise answer grader. Compare predicted and target answers for semantic equivalence. You must output ONLY raw JSON data without any additional text or formatting.",
     )
     
     # Run agent with suppressed logs
     with temporary_log_level("WARNING"):
         response = await grading_agent.run(grading_prompt)
     
+    logger.debug(f"Raw response object: {response}")
     response_text = response.content if hasattr(response, "content") else str(response)
+    
+    # If content is empty, try to fallback to the last valid assistant message in history
+    # This handles cases where the agent generates an empty final message
+    if not response_text and response.details and response.details.messages:
+        for msg in reversed(response.details.messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                candidate_content = msg.get("content", "").strip()
+                if candidate_content:
+                    response_text = candidate_content
+                    break
+    
     response_text = response_text.strip()
     
     # Extract JSON from response
     json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
     if json_match:
-        grades = json.loads(json_match.group())
+        try:
+            grades = json.loads(json_match.group())
+        except json.JSONDecodeError:
+            print(f"⚠️ Failed to parse extracted JSON block. Content: {json_match.group()!r}")
+            # Try parsing full response as fallback
+            try:
+                grades = json.loads(response_text)
+            except json.JSONDecodeError:
+                print(f"❌ Failed to parse JSON (full response). Length: {len(response_text)}")
+                print(f"❌ Response content: {response_text!r}")
+                raise
     else:
         # Try parsing the whole response
-        grades = json.loads(response_text)
+        try:
+            grades = json.loads(response_text)
+        except json.JSONDecodeError:
+            print(f"❌ Failed to parse JSON (full response). Length: {len(response_text)}")
+            print(f"❌ Response content: {response_text!r}")
+            raise
     
     # Count results
     total_correct = 0

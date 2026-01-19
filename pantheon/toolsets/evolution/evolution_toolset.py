@@ -71,6 +71,47 @@ class EvolutionSession:
         
         # === Compatibility ===
         self.config_dict = config_dict  # Keep for other configurations
+
+        # === Caching ===
+        self._cached_database = None
+        self._last_db_load_time = 0.0
+
+    def get_database(self, force_reload: bool = False):
+        """Get or load the EvolutionDatabase with caching"""
+        from pantheon.evolution import EvolutionDatabase
+        
+        if not self.workspace_path:
+            return None
+            
+        db_path = Path(self.workspace_path)
+        state_file = db_path / "evolution_state.json"
+        
+        if not state_file.exists():
+            return None
+
+        # Reload if forced, not cached, or file changed essentially (checking mtime could be added here for more robustness)
+        # For now, we rely on the caller to pass force_reload=True if they know something changed,
+        # or we could check file mtime.
+        should_reload = force_reload or self._cached_database is None
+        
+        if not should_reload:
+            # Check if file has been modified since last load
+            try:
+                mtime = state_file.stat().st_mtime
+                if mtime > self._last_db_load_time:
+                    should_reload = True
+            except OSError:
+                should_reload = True
+
+        if should_reload:
+            try:
+                self._cached_database = EvolutionDatabase.load(str(db_path))
+                self._last_db_load_time = time.time()
+            except Exception as e:
+                logger.warning(f"Failed to load evolution database: {e}")
+                return None
+        
+        return self._cached_database
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize session to dictionary"""
@@ -1027,4 +1068,142 @@ class EvolutionToolSet(ToolSet):
             return {
                 "success": False,
                 "error": f"Failed to read HTML report: {str(e)}"
+            }
+    
+    @tool(exclude=True)
+    async def get_evolution_visualization_data(
+        self,
+        evolution_id: str,
+        data_type: str,
+        since_order: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get evolution visualization data for real-time frontend rendering.
+        
+        This tool provides access to the same data used by the HTML visualizer,
+        but in a structured format suitable for incremental updates.
+        
+        Args:
+            evolution_id: Evolution ID
+            data_type: Type of visualization data to retrieve:
+                - "tree": Evolution tree structure (parent-child relationships)
+                - "history": Score history over iterations
+                - "heatmap": MAP-Elites heatmap data
+                - "programs": Detailed program information
+                - "stats": Summary statistics
+            since_order: Optional. If provided, only return data for programs
+                        with order > since_order (for incremental updates)
+        
+        Returns:
+            {
+                "success": bool,
+                "data": {...},  # Data structure depends on data_type
+                "latest_order": int,  # Highest order in current data
+                "total_programs": int,  # Total number of programs
+                "error": str  # Error message if failed
+            }
+        """
+        from pantheon.evolution import EvolutionDatabase
+        from pantheon.evolution.visualizer import EvolutionVisualizer
+        
+        session = self.manager.get_session(evolution_id)
+        
+        if not session:
+            return {
+                "success": False,
+                "error": f"Evolution {evolution_id} not found"
+            }
+        
+        if not session.workspace_path:
+            return {
+                "success": False,
+                "error": "Evolution workspace not available"
+            }
+        
+        try:
+            # Load database from workspace using caching
+            database = session.get_database()
+            
+            if not database:
+                # Evolution hasn't started yet or no checkpoint saved
+                return {
+                    "success": True,
+                    "data": None,
+                    "latest_order": 0,
+                    "total_programs": 0,
+                    "message": "No evolution data available yet"
+                }
+            
+            visualizer = EvolutionVisualizer(database, objective=session.objective)
+            
+            # Get latest order from database
+            latest_order = 0
+            if database.programs:
+                latest_order = max((p.order for p in database.programs.values() if p.order is not None), default=0)
+            
+            # Prepare data based on type
+            data = None
+            if data_type == "tree":
+                # Always return full tree structure to ensure D3.js can render correctly.
+                # Incremental tree updates are tricky because we need the parent structure.
+                # Given typical tree sizes, sending the full tree JSON is acceptable.
+                data = visualizer.build_tree_data()
+            elif data_type == "history":
+                data = visualizer.get_score_history()
+            elif data_type == "heatmap":
+                data = visualizer.get_map_elites_data()
+            elif data_type == "programs":
+                data = visualizer.get_programs_data()
+            elif data_type == "stats":
+                data = visualizer.get_summary_stats()
+            else:
+                return {
+                    "success": False,
+                    "error": f"Unknown data_type: {data_type}"
+                }
+            
+            # Filter incremental ONLY for non-tree types where it makes sense
+            if since_order is not None and data_type != "tree" and data_type != "stats":
+                if data_type == "programs" and isinstance(data, dict):
+                    # Filter programs by order
+                    # Need to check order from visualizer or database
+                    filtered_data = {}
+                    for prog_id, prog_data in data.items():
+                        prog = database.programs.get(prog_id)
+                        if prog and prog.order is not None and prog.order > since_order:
+                            filtered_data[prog_id] = prog_data
+                    data = filtered_data
+                elif data_type == "history" and isinstance(data, list):
+                    # History is ordered by iteration, not strictly program order
+                    # But usually we just append new history points.
+                    # History format: [{"iteration": 0, "score": 0.5, "order": 10}, ...]
+                    # Check if 'order' field exists in history points
+                    if data and "order" in data[0]:
+                         data = [d for d in data if d.get("order", 0) > since_order]
+                    else:
+                        # Fallback: if no order in history, return all (or implement iteration based filtering)
+                        # Current visualizer.get_score_history might not include 'order'.
+                        # Let's check visualizer.py implementation if needed.
+                        # For now, let's assume client handles deduplication or valid "since_order" is sufficient if "order" is present.
+                        pass
+                # Heatmap acts as a grid, incremental update is also tricky unless we track cell updates.
+                # For now, let's return full heatmap to be safe, or just filter map_elites_data list if it has order.
+                elif data_type == "heatmap" and isinstance(data, list):
+                     # Map elites data usually: [{"coords": [x,y], "score": ..., "program_id": ..., "order": ...}]
+                     # If order is present:
+                     if data and "order" in data[0]:
+                         data = [d for d in data if d.get("order", 0) > since_order]
+            
+            return {
+                "success": True,
+                "data": data,
+                "latest_order": latest_order,
+                "total_programs": len(database.programs),
+            }
+            
+        except Exception as e:
+            logger.exception(f"Error generating visualization data: {e}")
+            return {
+                "success": False,
+                "error": str(e)
             }

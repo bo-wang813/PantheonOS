@@ -265,9 +265,12 @@ def generate_test_prompt(info: dict) -> str:
 
 ## IMPORTANT: Execution Rules
 
-1. **NON-INTERACTIVE**: Do NOT ask the user any questions or request approval/feedback. Work autonomously until completion.
+
+1. **NON-INTERACTIVE**: Do NOT ask the user any questions or request approval/feedback during the analysis. Work autonomously.
 2. **NO USER INTERACTION**: Complete the entire analysis independently without requesting feedback.
 3. **FINAL ANSWER ONLY**: Only communicate with the user when providing your final answers.
+4. **LOOP TERMINATION**: After submitting your answer via `submit_answer`, you MUST end the session. You can do this by calling `notify_user(message="Task completed", blocked_on_user=True)`. Alternatively, simply STOP generating any further output (no text, no tool calls).
+
 
 ## Environment (PRE-INSTALLED - DO NOT REINSTALL)
 
