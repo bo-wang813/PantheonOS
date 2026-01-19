@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """
-Run Pantheon Evolution on the Scanorama Algorithm.
+Run Pantheon Evolution on the Harmony Algorithm.
 
 This script demonstrates how to use Pantheon Evolution to optimize
-a multi-file batch correction algorithm. The evolution process will:
+a data integration algorithm. The evolution process will:
 
-1. Generate mutations of the scanorama package (3 files)
-2. Evaluate each mutation on TMA single-cell data
+1. Generate mutations of the harmony.py implementation
+2. Evaluate each mutation on synthetic single-cell data
 3. Select the best-performing variants
 4. Iterate until convergence or max iterations
 
@@ -30,9 +30,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
-# Set data dir so evaluator can find data when running in temp workspace
+# Set HARMONY_DATA_DIR so evaluator can find data when running in temp workspace
 _example_dir = Path(__file__).parent.resolve()
-os.environ.setdefault("SCANORAMA_DATA_DIR", str(_example_dir.parent / "evolution_harmonypy" / "data"))
+os.environ.setdefault("HARMONY_DATA_DIR", str(_example_dir.parent / "data"))
 
 
 async def run_evolution(
@@ -55,111 +55,72 @@ async def run_evolution(
 
     # Get paths
     example_dir = Path(__file__).parent
-    scanorama_dir = example_dir / "scanorama"
+    harmony_path = example_dir / "harmony.py"
     evaluator_path = example_dir / "evaluator.py"
 
-    # Load initial code as multi-file CodebaseSnapshot
-    # This is the key difference from single-file evolution
-    initial_code = CodebaseSnapshot.from_directory(
-        str(scanorama_dir),
-        include_patterns=["*.py"],
-    )
+    # Load initial code and evaluator
+    # Use CodebaseSnapshot with correct filename so evaluator can find it
+    initial_code = CodebaseSnapshot.from_single_file("harmony.py", harmony_path.read_text())
     evaluator_code = evaluator_path.read_text()
-
-    print(f"Loaded {initial_code.file_count()} files, {initial_code.total_lines()} total lines")
-    for path in sorted(initial_code.files.keys()):
-        lines = len(initial_code.files[path].split('\n'))
-        print(f"  - {path}: {lines} lines")
 
     # Load configuration from file if output_dir has config.yaml, otherwise create default
     config_path = Path(output_dir) / "config.yaml" if output_dir else None
     if config_path and config_path.exists():
         config = EvolutionConfig.from_yaml(str(config_path))
-        config.max_iterations = iterations
+        config.max_iterations = iterations  # Override with command line arg
         config.log_level = "DEBUG" if verbose else "INFO"
         print(f"Loaded config from: {config_path}")
     else:
-        # Create configuration optimized for multi-file evolution
+        # Create default configuration
         config = EvolutionConfig(
             max_iterations=iterations,
-            num_workers=2,  # Fewer workers for multi-file (more context per mutation)
-            num_islands=2,  # Fewer islands
-            num_inspirations=1,  # Fewer inspirations to save context
-            num_top_programs=2,  # Fewer top programs
+            num_workers=8,  # Parallel workers for evolution
+            num_islands=3,
+            num_inspirations=2,
+            num_top_programs=3,
             max_parallel_evaluations=2,
-            evaluation_timeout=180,  # Longer timeout for more complex code
-            analyzer_timeout=120,
+            evaluation_timeout=120,
+            analyzer_timeout=120,  # Increased timeout for analyzer (uses think tool)
             feature_dimensions=["mixing_score", "speed_score", "bio_conservation_score"],
-            early_stop_generations=100,
+            early_stop_generations=200,
             function_weight=1.0,
             llm_weight=0.0,
             log_level="DEBUG" if verbose else "INFO",
             log_iterations=True,
             checkpoint_interval=10,
             db_path=output_dir,
-            # Multi-file specific settings
-            max_code_length=80000,  # Allow more code for 3 files
         )
 
-    # Define optimization objective - specific to scanorama's structure
-    objective = """Optimize the Scanorama batch correction algorithm for:
+    # Define optimization objective
+    objective = """Optimize the Harmony algorithm implementation for:
 
-1. **Integration Quality** (45% weight): Improve batch mixing while preserving biological structure.
-   - The algorithm uses mutual nearest neighbors (MNN) to find correspondences
-   - The `assemble()` function applies nonlinear corrections using RBF kernels
-   - The `transform()` function computes bias vectors for correction
+1. **Integration Quality** (40% weight): Improve batch mixing while preserving biological structure.
+   - The algorithm should effectively remove batch effects
+   - Biological clusters should remain distinct after correction
 
-2. **Biological Conservation** (45% weight): Preserve biological variance.
+2. **Performance** (20% weight): Reduce execution time.
+   - Optimize hot loops and matrix operations
+   - Consider vectorization opportunities
+   - Avoid redundant computations
+
+3. **Convergence** (10% weight): Improve convergence behavior.
+   - Reduce number of iterations needed
+   - Ensure stable convergence
+
+4. **Biological Conservation** (30% weight): Preserve biological variance.
    - Don't over-correct and remove biological signal
-   - Maintain cell type separation after correction
+   - Maintain cluster separation
 
-3. **Performance** (10% weight): Reduce execution time.
-   - The `nn_approx()` function uses Annoy for approximate nearest neighbors
-   - The `batch_bias()` function can be a bottleneck for large datasets
-   - Consider vectorization opportunities in `mnn()` and `transform()`
-
-## File Structure (3 files):
-
-### scanorama/scanorama.py (Main Algorithm)
-Key functions to consider optimizing:
-- `integrate()` / `correct()`: Main entry points
-- `assemble()`: Core panorama assembly (orchestrates alignment and correction)
-- `find_alignments()`: Finds matching cells between datasets
-- `transform()`: Computes nonlinear bias vectors using RBF kernel
-- `mnn()`: Mutual nearest neighbor detection
-- `nn_approx()`: Approximate nearest neighbor search
-- `batch_bias()`: Computes smoothed bias vectors (potential bottleneck)
-
-### scanorama/utils.py (Utilities)
-- `reduce_dimensionality()`: PCA-based dimensionality reduction
-- `handle_zeros_in_scale()`: Numerical stability helper
-
-### scanorama/__init__.py (Package Init)
-- Just exports from scanorama.py
-
-## Key Parameters (in scanorama.py):
-- ALPHA (0.10): Alignment score minimum cutoff
-- KNN (20): Number of nearest neighbors
-- SIGMA (15): RBF kernel smoothing parameter
-- DIMRED (100): Dimensionality for integration
-
-## Constraints:
-- Keep the public API (integrate, correct function signatures)
-- Maintain numerical stability (handle edge cases)
-- Don't break imports between files
-- Keep the package structure intact
-
-## Areas for Algorithm-Level Improvement:
-- The RBF kernel in transform() could use different kernel functions
-- The alignment scoring in find_alignments() could be improved
-- The panorama merging strategy in assemble() could be optimized
-- Consider adaptive sigma based on local density
+Constraints:
+- Keep the public API (run_harmony function signature)
+- Maintain numerical stability
+- Don't remove essential functionality
 """
 
     print("=" * 60)
-    print("Pantheon Evolution: Scanorama Algorithm Optimization")
+    print("Pantheon Evolution: Harmony Algorithm Optimization")
     print("=" * 60)
-    print(f"\nInitial code: {scanorama_dir} ({initial_code.file_count()} files)")
+    print(f"\nInitial code: {harmony_path}")
     print(f"Evaluator: {evaluator_path}")
     print(f"Iterations: {iterations}")
     print(f"Output: {output_dir or 'None (results not saved)'}")
@@ -186,13 +147,10 @@ Key functions to consider optimizing:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Save best code (all files)
-        best_program = result.best_program
-        if best_program:
-            optimized_dir = output_path / "scanorama_optimized"
-            optimized_dir.mkdir(exist_ok=True)
-            best_program.snapshot.to_workspace(str(optimized_dir))
-            print(f"\nBest code saved to: {optimized_dir}")
+        # Save best code
+        best_code_path = output_path / "harmony_optimized.py"
+        best_code_path.write_text(result.best_code)
+        print(f"\nBest code saved to: {best_code_path}")
 
         # Save report
         report_path = output_path / "evolution_report.json"
@@ -207,7 +165,7 @@ Key functions to consider optimizing:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evolve the Scanorama algorithm using Pantheon Evolution",
+        description="Evolve the Harmony algorithm using Pantheon Evolution",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -264,8 +222,6 @@ Examples:
         sys.exit(1)
     except Exception as e:
         print(f"\nError: {e}")
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
 
 

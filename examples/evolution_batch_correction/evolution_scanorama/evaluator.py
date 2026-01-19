@@ -13,11 +13,20 @@ import numpy as np
 import pandas as pd
 import time
 import sys
+import os
 import importlib.util
 from pathlib import Path
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import silhouette_score
 from typing import Dict, Any, Tuple, List
+
+
+def _get_data_dir() -> Path:
+    """Get the shared data directory path."""
+    env_data_dir = os.environ.get("SCANORAMA_DATA_DIR")
+    if env_data_dir:
+        return Path(env_data_dir)
+    return Path(__file__).parent.parent / "data"
 
 
 def load_tma_data(
@@ -228,9 +237,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         }
 
     # Load TMA training data with real cell type labels
-    import os
-    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
-    data_dir = Path(os.environ.get("SCANORAMA_DATA_DIR", _default_data_dir))
+    data_dir = _get_data_dir()
 
     try:
         X_train, batch_train, celltype_train = load_tma_data(data_dir, split="train")
@@ -370,9 +377,7 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
         }
 
     # Load TMA data
-    import os
-    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
-    data_dir = Path(os.environ.get("SCANORAMA_DATA_DIR", _default_data_dir))
+    data_dir = _get_data_dir()
 
     try:
         X, batch_labels, celltype_labels = load_tma_data(data_dir, split=split)
@@ -455,8 +460,6 @@ def evaluate_on_test(workspace_path: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    import os
-
     # Use current directory as workspace
     workspace = os.path.dirname(os.path.abspath(__file__))
 

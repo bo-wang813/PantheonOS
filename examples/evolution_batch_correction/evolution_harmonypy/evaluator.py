@@ -14,12 +14,87 @@ import numpy as np
 import pandas as pd
 import time
 import sys
+import os
 import importlib.util
 from pathlib import Path
+from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import silhouette_score
-from sklearn.cluster import KMeans
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
+
+
+# =============================================================================
+# Shared metrics functions (inlined for isolated workspace execution)
+# =============================================================================
+
+def load_tma_data(
+    data_dir: Path,
+    split: str = "train",
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load TMA data with real cell type labels."""
+    df = pd.read_csv(data_dir / f"tma_8000_{split}.csv")
+    X = df.iloc[:, :30].values  # PC1-PC30
+    batch_labels = df["donor"].values
+    celltype_labels = df["celltype"].values
+    return X, batch_labels, celltype_labels
+
+
+def compute_batch_mixing_score(
+    X: np.ndarray,
+    batch_labels: np.ndarray,
+    k: int = 50,
+) -> float:
+    """Compute batch mixing score using k-nearest neighbors."""
+    n_cells = X.shape[0]
+    unique_batches = np.unique(batch_labels)
+
+    expected_props = np.array([
+        np.sum(batch_labels == b) / n_cells
+        for b in unique_batches
+    ])
+
+    nn = NearestNeighbors(n_neighbors=min(k + 1, n_cells), algorithm="auto")
+    nn.fit(X)
+    _, indices = nn.kneighbors(X)
+
+    mixing_scores = []
+    for i in range(n_cells):
+        neighbor_batches = batch_labels[indices[i, 1:]]
+        observed_props = np.array([
+            np.sum(neighbor_batches == b) / k
+            for b in unique_batches
+        ])
+        score = 1 - np.sqrt(np.mean((observed_props - expected_props) ** 2))
+        mixing_scores.append(max(0, score))
+
+    return np.mean(mixing_scores)
+
+
+def compute_bio_conservation_score(
+    X_corrected: np.ndarray,
+    X_original: np.ndarray,
+    true_labels: np.ndarray,
+) -> float:
+    """Compute biological structure conservation score using silhouette score."""
+    try:
+        if len(np.unique(true_labels)) > 1:
+            silhouette = silhouette_score(X_corrected, true_labels)
+            return (silhouette + 1) / 2
+        else:
+            return 0.5
+    except Exception:
+        return 0.5
+
+
+def _get_data_dir() -> Path:
+    """Get the shared data directory path."""
+    # First check environment variable
+    env_data_dir = os.environ.get("HARMONY_DATA_DIR")
+    if env_data_dir:
+        return Path(env_data_dir)
+
+    # Default to shared data directory
+    return Path(__file__).parent.parent / "data"
 
 
 def generate_test_data(
@@ -84,13 +159,13 @@ def generate_test_data(
 
 
 def load_pbmc_data(
-    data_dir: Path,
+    data_dir: Optional[Path] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Load real PBMC data from CSV files.
 
     Args:
-        data_dir: Directory containing the data files
+        data_dir: Directory containing the data files (defaults to shared data dir)
 
     Returns:
         X_train: Training features (n_train x 30)
@@ -98,6 +173,9 @@ def load_pbmc_data(
         X_val: Validation features (n_val x 30)
         batch_val: Validation batch labels
     """
+    if data_dir is None:
+        data_dir = _get_data_dir()
+
     # Read train data
     train_df = pd.read_csv(data_dir / "pbmc_3500_full_train.csv")
     X_train = train_df.iloc[:, :30].values  # PC1-PC30
@@ -109,30 +187,6 @@ def load_pbmc_data(
     batch_val = val_df["donor"].values
 
     return X_train, batch_train, X_val, batch_val
-
-
-def load_tma_data(
-    data_dir: Path,
-    split: str = "train",
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Load TMA data with real cell type labels.
-
-    Args:
-        data_dir: Directory containing the data files
-        split: Which split to load ("train", "val", or "test")
-
-    Returns:
-        X: Features (n_cells x 30)
-        batch_labels: Batch labels (donor)
-        celltype_labels: True cell type labels
-    """
-    df = pd.read_csv(data_dir / f"tma_8000_{split}.csv")
-    X = df.iloc[:, :30].values  # PC1-PC30
-    batch_labels = df["donor"].values
-    celltype_labels = df["celltype"].values
-
-    return X, batch_labels, celltype_labels
 
 
 def generate_pseudo_labels(X: np.ndarray, n_clusters: int = 5) -> np.ndarray:
@@ -151,88 +205,6 @@ def generate_pseudo_labels(X: np.ndarray, n_clusters: int = 5) -> np.ndarray:
     """
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
     return kmeans.fit_predict(X)
-
-
-def compute_batch_mixing_score(
-    X: np.ndarray,
-    batch_labels: np.ndarray,
-    k: int = 50,
-) -> float:
-    """
-    Compute batch mixing score using k-nearest neighbors.
-
-    Measures how well different batches are mixed in the embedding.
-    Higher score = better mixing.
-
-    Args:
-        X: Embedding (n_cells x n_features)
-        batch_labels: Batch assignments
-        k: Number of neighbors
-
-    Returns:
-        Mixing score in [0, 1]
-    """
-    n_cells = X.shape[0]
-    unique_batches = np.unique(batch_labels)
-    n_batches = len(unique_batches)
-
-    # Expected proportion of each batch
-    expected_props = np.array([
-        np.sum(batch_labels == b) / n_cells
-        for b in unique_batches
-    ])
-
-    # Find k nearest neighbors
-    nn = NearestNeighbors(n_neighbors=min(k + 1, n_cells), algorithm="auto")
-    nn.fit(X)
-    _, indices = nn.kneighbors(X)
-
-    # For each cell, compute batch proportions in neighborhood
-    mixing_scores = []
-    for i in range(n_cells):
-        neighbor_batches = batch_labels[indices[i, 1:]]  # Exclude self
-        observed_props = np.array([
-            np.sum(neighbor_batches == b) / k
-            for b in unique_batches
-        ])
-
-        # Compare to expected (lower KL divergence = better mixing)
-        # Use simple correlation instead for stability
-        score = 1 - np.sqrt(np.mean((observed_props - expected_props) ** 2))
-        mixing_scores.append(max(0, score))
-
-    return np.mean(mixing_scores)
-
-
-def compute_bio_conservation_score(
-    X_corrected: np.ndarray,
-    X_original: np.ndarray,
-    true_labels: np.ndarray,
-) -> float:
-    """
-    Compute biological structure conservation score using silhouette score.
-
-    Measures how well the biological clusters are separated after correction.
-    Higher silhouette = better separation of cell types.
-
-    Args:
-        X_corrected: Corrected embedding
-        X_original: Original embedding (unused, kept for API compatibility)
-        true_labels: True biological labels (cell types)
-
-    Returns:
-        Silhouette score normalized to [0, 1]
-    """
-    try:
-        if len(np.unique(true_labels)) > 1:
-            # Compute silhouette score on corrected data
-            silhouette = silhouette_score(X_corrected, true_labels)
-            # Normalize from [-1, 1] to [0, 1]
-            return (silhouette + 1) / 2
-        else:
-            return 0.5
-    except Exception:
-        return 0.5
 
 
 def compute_convergence_score(objectives: list) -> float:
@@ -297,11 +269,7 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
         }
 
     # Load TMA training data with real cell type labels
-    # Use absolute path since evaluator may run in temp workspace via subprocess
-    # where environment variables are not inherited
-    import os
-    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
-    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", _default_data_dir))
+    data_dir = _get_data_dir()
 
     try:
         X_train, batch_train, celltype_train = load_tma_data(data_dir, split="train")
@@ -419,10 +387,7 @@ def _evaluate_on_split(workspace_path: str, split: str) -> Dict[str, Any]:
         }
 
     # Load TMA data
-    # Use absolute path since evaluator may run in temp workspace via subprocess
-    import os
-    _default_data_dir = r"C:\Users\wzxu\Desktop\Pantheon\pantheon-agents-2\examples\evolution_harmonypy\data"
-    data_dir = Path(os.environ.get("HARMONY_DATA_DIR", _default_data_dir))
+    data_dir = _get_data_dir()
 
     try:
         X, batch_labels, celltype_labels = load_tma_data(data_dir, split=split)
@@ -525,7 +490,6 @@ def evaluate_on_test(workspace_path: str) -> Dict[str, Any]:
 # Guard against execution when code is injected into subprocess (where __file__ is not defined)
 if __name__ == "__main__" and "__file__" in dir():
     # Test the evaluator locally
-    import os
 
     # Use current directory as workspace
     workspace = os.path.dirname(os.path.abspath(__file__))
