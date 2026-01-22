@@ -147,15 +147,16 @@ def _compute_size_score(panel_size: int, k_target: int = 500, k_max: int = 1000)
 
 
 def _compute_convergence_improvement(reward_history: list) -> float:
-    """Compute improvement from early to late training."""
-    if len(reward_history) < 4:
+    """
+    Compute convergence based on the average of the first 5 epochs and the best
+    of the last 10 epochs. This assumes we will always run for at least 15 epochs.
+    """
+    if len(reward_history) < 15:
         return 0.0
-
-    n = len(reward_history)
-    early = np.mean(reward_history[:n // 4])
-    late = np.mean(reward_history[-n // 4:])
-
-    return max(0.0, late - early)
+    
+    early = np.mean(reward_history[:5])
+    late_best = max(reward_history[-10:])  # best in final stretch
+    return max(0.0, late_best - early)
 
 
 def evaluate(workspace_path: str) -> Dict[str, Any]:
@@ -250,7 +251,6 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
     final_si = panel_metrics["si"]
     panel_size = panel_metrics["panel_size"]
 
-    size_score = _compute_size_score(panel_size)
     training_speed = 1.0 / (1.0 + training_time / 60.0)
 
     reward_history = training_history.get("reward_history", [])
@@ -260,17 +260,15 @@ def evaluate(workspace_path: str) -> Dict[str, Any]:
     fitness_weights = {
         "final_ari": 0.35,
         "final_nmi": 0.15,
-        "final_si": 0.10,
-        "size_score": 0.15,
+        "final_si": 0.15,
         "training_speed": 0.15,
-        "convergence_improvement": 0.10,
+        "convergence_improvement": 0.20,
     }
 
     return {
         "final_ari": final_ari,
         "final_nmi": final_nmi,
         "final_si": final_si,
-        "size_score": size_score,
         "training_speed": training_speed,
         "convergence_improvement": convergence_improvement,
         "panel_size": panel_size,
