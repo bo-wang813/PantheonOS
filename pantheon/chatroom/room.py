@@ -1584,3 +1584,39 @@ class ChatRoom(ToolSet):
                 return False, f"Provider '{provider}' not available (missing API key)"
 
         return True, ""
+
+    @tool
+    async def reload_settings(self) -> dict:
+        """Reload configuration settings from .env file and settings.json.
+
+        This allows users to update their API keys and other settings
+        without restarting the Pod.
+
+        Reloads:
+        - .env file (user environment variables, overrides existing values)
+        - ~/.pantheon/settings.json (user global config)
+        - .pantheon/settings.json (project config)
+        - mcp.json (MCP server configuration)
+
+        Does NOT reload:
+        - System environment variables (requires Pod restart)
+
+        Returns:
+            dict with success status and message
+        """
+        try:
+            from pantheon.settings import get_settings
+
+            settings = get_settings()
+            settings.reload()
+
+            return {
+                "success": True,
+                "message": "Settings reloaded successfully. New API keys and configuration are now active."
+            }
+        except Exception as e:
+            logger.error(f"Error reloading settings: {e}")
+            return {
+                "success": False,
+                "message": f"Failed to reload settings: {str(e)}"
+            }

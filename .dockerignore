@@ -1,0 +1,35 @@
+# Non-essential Assets
+workdir/
+data/
+tmp/
+benchmarks/
+docs/
+examples/
+home/
+
+# Environment and Cache
+.venv/
+.git/
+.gitignore
+.env
+.env.*
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.idea/
+.clade/
+.executor/
+.gemini/
+.pantheon/
+.endpoint-logs/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Notebooks and Large Files
+*.ipynb
+.notebook_contexts.json
+jetstream_storage/

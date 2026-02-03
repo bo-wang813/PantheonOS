@@ -51,8 +51,7 @@
 <!-- Example: -->
 <!-- - Always activate .venv before running Python scripts -->
 <!-- - Use uv for Python dependency management -->
-- Always prefer using .venv for Python projects.
-- Always use uv for Python projects
+
 
 ## Strategies
 

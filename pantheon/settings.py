@@ -149,13 +149,16 @@ class Settings:
     SETTINGS_FILE = "settings.json"
     MCP_FILE = "mcp.json"
 
-    def __init__(self, work_dir: Optional[Path] = None):
+    def __init__(self, work_dir: Optional[Path] = None, system_env_vars: Optional[Dict[str, str]] = None):
         """
         Initialize settings manager.
 
         Args:
             work_dir: Working directory for project-level config.
                       Defaults to PROJECT_ROOT (captured at module load, before any chdir).
+            system_env_vars: System-level environment variables (injected via CLI).
+                            All variables are injected to os.environ (if not already set).
+                            User's .env file always has higher priority.
         """
         from .constant import PROJECT_ROOT
 
@@ -167,6 +170,44 @@ class Settings:
         self._settings: Dict[str, Any] = {}
         self._mcp: Dict[str, Any] = {}
         self._loaded = False
+
+        # Process system environment variables (inject to os.environ)
+        if system_env_vars:
+            self._process_system_env_vars(system_env_vars)
+
+    def _process_system_env_vars(self, env_vars: Dict[str, str]) -> None:
+        """
+        Inject system environment variables to os.environ.
+
+        Variables are only injected if not already set, ensuring user's .env
+        file (loaded via load_dotenv) has highest priority.
+
+        Args:
+            env_vars: Dictionary of environment variables from system config
+        """
+        import os
+
+        if not env_vars:
+            logger.info("No system environment variables to inject")
+            return
+
+        injected = []
+        skipped = []
+
+        for key, value in env_vars.items():
+            if key not in os.environ:
+                os.environ[key] = value
+                # Truncate value for logging (show first 10 chars + "...")
+                display_value = f"{value[:10]}..." if len(value) > 10 else value
+                injected.append(f"{key}={display_value}")
+            else:
+                skipped.append(key)
+
+        # Log summary
+        if injected:
+            logger.info(f"Injected {len(injected)} system env vars: {', '.join(injected)}")
+        if skipped:
+            logger.info(f"Skipped {len(skipped)} env vars (already set by user): {', '.join(skipped)}")
 
     @property
     def config_dir(self) -> Path:
@@ -412,7 +453,7 @@ class Settings:
         env_file = self._settings.get("env_file", ".env")
         env_path = self.work_dir / env_file
         if env_path.exists():
-            load_dotenv(env_path)
+            load_dotenv(env_path, override=True)
             logger.debug(f"Loaded environment from {env_path}")
 
         self._load_mcp()
@@ -463,9 +504,8 @@ class Settings:
         Get an API key with environment variable priority.
 
         Priority:
-        1. Environment variable (os.environ)
-        2. env_file loaded values
-        3. settings.json api_keys section
+        1. Environment variable (os.environ) - includes both user's .env and system defaults
+        2. settings.json api_keys section
 
         Args:
             key: API key name (e.g., 'OPENAI_API_KEY')
@@ -475,12 +515,12 @@ class Settings:
         """
         self._ensure_loaded()
 
-        # Environment variable has highest priority
+        # 1. Environment variable (includes user's .env and system defaults)
         env_value = os.environ.get(key)
         if env_value:
             return env_value
 
-        # Fall back to settings.json
+        # 2. Fall back to settings.json
         return self._settings.get("api_keys", {}).get(key)
 
     def get_endpoint_config(self) -> Dict[str, Any]:
@@ -544,6 +584,8 @@ class Settings:
             "server_urls": server_urls,
             "server_host": os.environ.get("PANTHEON_SERVER_HOST")
             or remote.get("server_host", "localhost"),
+            "jwt": os.environ.get("NATS_JWT"),
+            "subject_prefix": os.environ.get("NATS_SUBJECT_PREFIX"),
         }
 
     def get_knowledge_config(self) -> Dict[str, Any]:
@@ -665,26 +707,45 @@ class Settings:
         self._ensure_loaded()
         return self._mcp
 
+    def reload(self) -> None:
+        """Reload settings and .env file.
+
+        This reloads:
+        1. Settings files (settings.json) - all three layers
+        2. Environment file (.env) - with override=True to update existing vars
+        3. MCP configuration (mcp.json)
+
+        Does NOT reload:
+        - System environment variables (injected at startup via --system_env_vars)
+
+        After reload, any changes in .env or settings.json will take effect immediately.
+        """
+        self._loaded = False
+        self._ensure_loaded()
+        logger.info("Settings reloaded successfully")
+
 
 # Global settings instance (lazy loaded)
 _settings: Optional[Settings] = None
 
 
-def get_settings(work_dir: Optional[Path] = None) -> Settings:
+def get_settings(work_dir: Optional[Path] = None, system_env_vars: Optional[Dict[str, str]] = None) -> Settings:
     """
     Get or create the global settings instance.
 
     Args:
         work_dir: Working directory. If provided, creates new instance.
+        system_env_vars: System-level environment variables (injected via CLI).
+                        Auto-classified into sensitive and normal vars.
 
     Returns:
         Settings instance
     """
     global _settings
 
-    if work_dir is not None:
-        # Create new instance with custom work_dir
-        return Settings(work_dir)
+    if work_dir is not None or system_env_vars is not None:
+        # Create new instance with custom parameters
+        return Settings(work_dir, system_env_vars)
 
     if _settings is None:
         _settings = Settings()

@@ -1,5 +1,6 @@
 from typing import Optional
 from .backend.registry import BackendRegistry
+from pantheon.utils.log import logger
 from .backend.base import RemoteBackend, RemoteService
 import os
 from typing import Dict, Any
@@ -30,6 +31,69 @@ def resolve_backend_config(
         servers_env = os.getenv("NATS_SERVERS", "")
         if servers_env:
             config["server_urls"] = [s.strip() for s in servers_env.split("|") if s.strip()]
+
+        # NATS JWT and Seed Support (Dual Auth)
+        nats_jwt = remote_config.get("jwt") or os.getenv("NATS_JWT")
+        nats_seed = remote_config.get("seed") or os.getenv("NATS_SEED")
+        nats_token = remote_config.get("token") or os.getenv("NATS_TOKEN")
+
+        if nats_token:
+             config["user"] = "agent"
+             config["password"] = nats_token
+        elif nats_jwt and nats_seed:
+            try:
+                # Use nats-py's expected parameter names for JWT/NKey authentication
+                import nkeys
+                
+                # Use manual callbacks to ensure correct NKeys behavior (bypassing file parsing issues)
+                import nkeys
+                import base64
+                
+                # Check seed encoding (remove whitespace)
+                seed_str = nats_seed.strip()
+                jwt_str = nats_jwt.strip()
+                
+                seed_key = nkeys.from_seed(seed_str.encode())
+                public_key = seed_key.public_key.decode()
+                logger.debug(f"Manually loaded NKey from seed. Public Key: {public_key}")
+                logger.debug(f"JWT (first 20 chars): {jwt_str[:20]}...")
+
+                # Signature callback (must be async coroutine)
+                def signature_cb(nonce):
+                    logger.debug(f"signature_cb called with nonce={nonce}")
+                    if isinstance(nonce, str):
+                        nonce = nonce.encode()
+                    raw_sig = seed_key.sign(nonce)
+                    b64_sig = base64.b64encode(raw_sig)
+                    # print(f"DEBUG: Signed nonce {nonce} -> {b64_sig}") # Noisy
+                    return b64_sig
+                
+                # JWT callback (must be async coroutine)
+                def user_jwt_cb():
+                    logger.debug(f"user_jwt_cb called. Returning JWT first 10 chars: {jwt_str[:10]}")
+                    return jwt_str.encode()
+                
+                config["user_jwt_cb"] = user_jwt_cb
+                config["signature_cb"] = signature_cb
+                
+                # Ensure no conflicting args
+                config.pop("nkey", None)
+                config.pop("user_credentials", None)
+                config.pop("nkeys_seed_str", None)
+                
+                logger.debug(f"Configured manual JWT/NKey auth callbacks")
+            except Exception as e:
+                 raise ValueError(f"Failed to setup NATS credentials: {e}")
+        elif nats_jwt:
+             # Legacy/Simple JWT (unlikely to work without seed in 2.10 secure mode)
+             def user_jwt_cb():
+                 return nats_jwt.encode() if isinstance(nats_jwt, str) else nats_jwt
+             config["user_jwt_cb"] = user_jwt_cb
+            
+        # Subject prefix
+        subject_prefix = remote_config.get("subject_prefix") or os.getenv("NATS_SUBJECT_PREFIX")
+        if subject_prefix:
+            config["subject_prefix"] = subject_prefix
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

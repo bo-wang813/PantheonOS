@@ -214,6 +214,7 @@ async def start_services(
     speech_to_text_model: str = None,
     endpoint_id_hash: str | None = None,
     endpoint_mode: str = "embedded",
+    system_env_vars: str = None,
     **kwargs,
 ):
     """Start the chatroom service.
@@ -229,11 +230,35 @@ async def start_services(
         endpoint_id_hash: Fixed id_hash for endpoint to generate stable service_id. If not provided, auto-generated.
         endpoint_mode: How to start the endpoint. Options: "embedded" (same event loop),
                       "process" (independent subprocess).
+        system_env_vars: JSON string of system environment variables (injected by K8s Hub).
+                        Will be auto-classified into sensitive (stored in memory) and
+                        normal (injected to os.environ) based on variable name patterns.
     """
+    # Parse system_env_vars if provided
+    import json
+    parsed_system_env_vars = None
+    if system_env_vars:
+        try:
+            # Fire.Fire auto-parses JSON strings to dict, so handle both cases
+            if isinstance(system_env_vars, str):
+                parsed_system_env_vars = json.loads(system_env_vars)
+            elif isinstance(system_env_vars, dict):
+                parsed_system_env_vars = system_env_vars
+            else:
+                raise ValueError(f"system_env_vars must be str or dict, got {type(system_env_vars)}")
+
+            # Truncate values for logging
+            truncated = {k: f"{v[:10]}..." if len(v) > 10 else v for k, v in parsed_system_env_vars.items()}
+            logger.info(f"Received {len(parsed_system_env_vars)} system env vars from CLI: {truncated}")
+        except Exception as e:
+            logger.error(f"Failed to parse system_env_vars: {e}")
+    else:
+        logger.info("No system_env_vars received from CLI")
+
     # Load settings for defaults (CLI > Settings > code defaults)
     from pantheon.settings import get_settings
 
-    settings = get_settings()
+    settings = get_settings(system_env_vars=parsed_system_env_vars)
 
     # Apply defaults: CLI > Settings > code defaults
     service_name = service_name or settings.get(
