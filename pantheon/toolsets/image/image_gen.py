@@ -20,7 +20,6 @@ from pantheon.utils.vision import (
 # Multimodal models that support image input + output via acompletion API
 MULTIMODAL_IMAGE_MODELS = {
     "gemini/gemini-3-pro-image-preview",
-    "gemini/gemini-2.5-flash-image-preview",
     "gemini/gemini-2.0-flash-exp-image-generation",
 }
 
@@ -52,12 +51,12 @@ class ImageGenerationToolSet(ToolSet):
                 if hasattr(selector, "resolve_image_gen_model"):
                     models = selector.resolve_image_gen_model(config)
                     return (
-                        models[0] if models else "gemini/gemini-2.5-flash-image-preview"
+                        models[0] if models else "gemini/gemini-3-pro-image-preview"
                     )
             return config
         except Exception:
             # Fallback if settings not available
-            return "gemini/gemini-2.5-flash-image-preview"
+            return "gemini/gemini-2.0-flash-exp-image-generation"
 
     @property
     def image_store(self) -> ImageStore:

@@ -283,14 +283,17 @@ class NATSService(RemoteService):
         self.nc = nc
         self.service_id = service_id
         self.kv_store = kv_store
-        
-        # Use provided timeout or get from settings (unified with ToolSetManager and Kernel)
+
+        # Use provided timeout or get from settings
         if timeout is not None:
             self.timeout = timeout
         else:
-            from pantheon.settings import get_settings
-            self.timeout = get_settings().tool_timeout
-            
+            try:
+                from pantheon.settings import get_settings
+                self.timeout = get_settings().tool_timeout
+            except Exception:
+                self.timeout = 3600
+
         self.service_subject = _format_subject(subject_prefix, f"pantheon.service.{service_id}")
 
         self._service_info = ServiceInfo(
@@ -414,13 +417,16 @@ class NATSRemoteWorker(RemoteWorker):
         self.kv_store = None
         self._service_name = service_name
         self._description = description
-        
-        # Use provided timeout or get from settings (unified with ToolSetManager and Kernel)
+
+        # Use provided timeout or get from settings
         if "timeout" in kwargs:
             self.timeout = kwargs["timeout"]
         else:
-            from pantheon.settings import get_settings
-            self.timeout = get_settings().tool_timeout
+            try:
+                from pantheon.settings import get_settings
+                self.timeout = get_settings().tool_timeout
+            except Exception:
+                self.timeout = 3600
 
         # Generate service ID using full hash for frontend compatibility
         id_hash = kwargs.get("id_hash")
@@ -434,7 +440,7 @@ class NATSRemoteWorker(RemoteWorker):
             # For cases without id_hash, generate a full hash from service_name + uuid
             fallback_id = f"{service_name}_{str(uuid.uuid4())[:8]}"
             self._service_id = hashlib.sha256(fallback_id.encode()).hexdigest()
-        
+
         # Use subject prefix if available from backend
         prefix = getattr(backend, "subject_prefix", "")
         self.service_subject = _format_subject(prefix, f"pantheon.service.{self._service_id}")

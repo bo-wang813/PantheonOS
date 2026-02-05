@@ -31,8 +31,7 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     libatspi2.0-0 \
     libxshmfence1 \
     && rm -rf /var/lib/apt/lists/* && \
-    curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    mv /root/.local/bin/uv /bin/uv
+    pip install uv
 
 # Set working directory
 WORKDIR /app

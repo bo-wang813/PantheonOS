@@ -58,9 +58,9 @@ DEFAULT_PROVIDER_MODELS = {
     # Gemini: Gemini 3/2.5 series
     # https://ai.google.dev/gemini-api/docs/models
     "gemini": {
-        "high": ["gemini/gemini-3-pro-preview", "gemini/gemini-2.5-pro"],
+        "high": ["gemini/gemini-3-pro-preview", "gemini/gemini-2.5-pro-preview"],
         "normal": ["gemini/gemini-3-flash-preview"],
-        "low": ["gemini/gemini-2.5-flash-lite"],
+        "low": ["gemini/gemini-2.5-flash-lite-preview"],
     },
     # Z.ai (Zhipu): GLM-4.6/4.5 series
     # https://open.bigmodel.cn/
@@ -106,7 +106,7 @@ FALLBACK_TAG = "low"
 DEFAULT_IMAGE_GEN_MODELS = {
     "gemini": {
         "high": ["gemini/gemini-3-pro-image-preview"],
-        "normal": ["gemini/gemini-2.5-flash-image-preview"],
+        "normal": ["gemini/gemini-3-pro-image-preview"],
     },
     "openai": {
         "high": ["dall-e-3"],
@@ -484,7 +484,7 @@ class ModelSelector:
                     return models if isinstance(models, list) else [models]
         
         # Ultimate fallback
-        return ["gemini/gemini-2.5-flash-image-preview"]
+        return ["gemini/gemini-3-pro-image-preview"]
 
     def get_provider_info(self) -> dict:
         """Get information about current provider selection.

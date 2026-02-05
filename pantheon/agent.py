@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 from uuid import uuid4
 
+
 from funcdesc import parse_func
 from pydantic import BaseModel, create_model
 
@@ -503,33 +504,54 @@ class Agent:
         self.response_format = response_format
         self.use_memory = use_memory
         self.memory = memory or Memory(str(uuid4()))
-        
-        # Tool timeout: use provided value, or get from settings (unified with ToolSetManager and Kernel)
-        if tool_timeout is not None:
-            self.tool_timeout = tool_timeout
-        else:
-            from .settings import get_settings
-            self.tool_timeout = get_settings().tool_timeout
-        
+
+        # Store user-specified overrides (if provided, these take priority)
+        self._tool_timeout_override = tool_timeout
+        self._max_tool_content_length_override = max_tool_content_length
+
         self.events_queue: asyncio.Queue = asyncio.Queue()
         self.force_litellm = force_litellm
         self.icon = icon
-        
-        # Tool content length: use provided value, or get from settings
-        if max_tool_content_length is not None:
-            self.max_tool_content_length = max_tool_content_length
-        else:
-            from .settings import get_settings
-            self.max_tool_content_length = get_settings().max_tool_content_length
 
         # Provider management (MCP, ToolSet, etc.)
         self.providers: dict[str, ToolProvider] = {}  # name -> ToolProvider instance
         self.not_loaded_toolsets: list[str] = []  # Track which toolsets failed to load
-        
+
         # Context injectors for dynamic content injection
         self.context_injectors: list = []  # List of ContextInjector instances
 
+    def _get_tool_timeout(self) -> int:
+        """Get tool timeout with priority: user override > settings."""
+        if self._tool_timeout_override is not None:
+            return self._tool_timeout_override
+        try:
+            from .settings import get_settings
+            return get_settings().tool_timeout
+        except Exception:
+            return 3600
+
+    def _get_max_tool_content_length(self) -> int:
+        """Get max tool content length with priority: user override > settings."""
+        if self._max_tool_content_length_override is not None:
+            return self._max_tool_content_length_override
+        try:
+            from .settings import get_settings
+            return get_settings().max_tool_content_length
+        except Exception:
+            return 10000
+
+    @property
+    def tool_timeout(self) -> int:
+        """Public API property for backward compatibility and dynamic access."""
+        return self._get_tool_timeout()
+
+    @property
+    def max_tool_content_length(self) -> int:
+        """Public API property for backward compatibility and dynamic access."""
+        return self._get_max_tool_content_length()
+
     @staticmethod
+
     def _filter_messages_by_execution_context(
         messages: list[dict], execution_context_id: str | None
     ) -> list[dict]:
@@ -1041,10 +1063,10 @@ class Agent:
                     tool_metadata = result.pop("_metadata", {})
                     # Merge instead of overwrite to preserve all metadata fields
                     tool_message["_metadata"].update(tool_metadata)
-                
+
                 # Process and truncate tool result in one step
                 content = process_tool_result(
-                    result, 
+                    result,
                     max_length=self.max_tool_content_length
                 )
                 

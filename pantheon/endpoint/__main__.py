@@ -12,6 +12,9 @@ from .hub import EndpointHub
 from pantheon.utils.log import logger
 from pantheon.settings import get_settings, load_jsonc
 
+# Load .env file
+load_dotenv(override=True)
+
 
 # Template locations
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -127,7 +130,6 @@ async def start_endpoint_hub(
 
 
 if __name__ == "__main__":
-    load_dotenv()
     fire.Fire(
         {
             "start": start_endpoint,

@@ -149,16 +149,21 @@ class Settings:
     SETTINGS_FILE = "settings.json"
     MCP_FILE = "mcp.json"
 
-    def __init__(self, work_dir: Optional[Path] = None, system_env_vars: Optional[Dict[str, str]] = None):
+    def __init__(self, work_dir: Optional[Path] = None):
         """
         Initialize settings manager.
 
         Args:
             work_dir: Working directory for project-level config.
                       Defaults to PROJECT_ROOT (captured at module load, before any chdir).
-            system_env_vars: System-level environment variables (injected via CLI).
-                            All variables are injected to os.environ (if not already set).
-                            User's .env file always has higher priority.
+
+        Note:
+            API keys should be set via:
+            - Environment variables: export OPENAI_API_KEY="sk-..."
+            - .env file: OPENAI_API_KEY=sk-...
+            - settings.json api_keys section
+
+            Use LiteLLM Proxy mode for secure API key handling (LITELLM_PROXY_ENABLED environment variable).
         """
         from .constant import PROJECT_ROOT
 
@@ -170,44 +175,6 @@ class Settings:
         self._settings: Dict[str, Any] = {}
         self._mcp: Dict[str, Any] = {}
         self._loaded = False
-
-        # Process system environment variables (inject to os.environ)
-        if system_env_vars:
-            self._process_system_env_vars(system_env_vars)
-
-    def _process_system_env_vars(self, env_vars: Dict[str, str]) -> None:
-        """
-        Inject system environment variables to os.environ.
-
-        Variables are only injected if not already set, ensuring user's .env
-        file (loaded via load_dotenv) has highest priority.
-
-        Args:
-            env_vars: Dictionary of environment variables from system config
-        """
-        import os
-
-        if not env_vars:
-            logger.info("No system environment variables to inject")
-            return
-
-        injected = []
-        skipped = []
-
-        for key, value in env_vars.items():
-            if key not in os.environ:
-                os.environ[key] = value
-                # Truncate value for logging (show first 10 chars + "...")
-                display_value = f"{value[:10]}..." if len(value) > 10 else value
-                injected.append(f"{key}={display_value}")
-            else:
-                skipped.append(key)
-
-        # Log summary
-        if injected:
-            logger.info(f"Injected {len(injected)} system env vars: {', '.join(injected)}")
-        if skipped:
-            logger.info(f"Skipped {len(skipped)} env vars (already set by user): {', '.join(skipped)}")
 
     @property
     def config_dir(self) -> Path:
@@ -475,6 +442,22 @@ class Settings:
         if mcp_user:
             logger.debug(f"Loaded user MCP config from {self.user_home}")
 
+    def __getitem__(self, key: str) -> Any:
+        """
+        Get a setting value using dictionary-style access.
+
+        Args:
+            key: Key to look up in settings (e.g., 'endpoint', or any top-level key)
+
+        Returns:
+            Setting value
+
+        Raises:
+            KeyError: If key not found
+        """
+        self._ensure_loaded()
+        return self._settings[key]
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a setting value using dot notation.
@@ -504,7 +487,7 @@ class Settings:
         Get an API key with environment variable priority.
 
         Priority:
-        1. Environment variable (os.environ) - includes both user's .env and system defaults
+        1. Environment variable (os.environ)
         2. settings.json api_keys section
 
         Args:
@@ -515,13 +498,28 @@ class Settings:
         """
         self._ensure_loaded()
 
-        # 1. Environment variable (includes user's .env and system defaults)
+        logger.debug(f"[SETTINGS.GET_API_KEY] Looking up key={key}")
+
+        # 1. Environment variable (highest priority)
         env_value = os.environ.get(key)
         if env_value:
+            logger.debug(
+                f"[SETTINGS.GET_API_KEY] ✓ Retrieved key {key} from "
+                f"os.environ | ValueLength={len(env_value)}"
+            )
             return env_value
 
         # 2. Fall back to settings.json
-        return self._settings.get("api_keys", {}).get(key)
+        settings_value = self._settings.get("api_keys", {}).get(key)
+        if settings_value:
+            logger.debug(
+                f"[SETTINGS.GET_API_KEY] ✓ Retrieved key {key} from "
+                f"settings.json | ValueLength={len(settings_value)}"
+            )
+            return settings_value
+
+        logger.debug(f"[SETTINGS.GET_API_KEY] Key {key} not found in any source")
+        return None
 
     def get_endpoint_config(self) -> Dict[str, Any]:
         """
@@ -714,38 +712,66 @@ class Settings:
         1. Settings files (settings.json) - all three layers
         2. Environment file (.env) - with override=True to update existing vars
         3. MCP configuration (mcp.json)
-
-        Does NOT reload:
-        - System environment variables (injected at startup via --system_env_vars)
+        4. Model selector cache (ensures configuration changes take effect)
+        5. Package manager cache (ensures packages path is synchronized)
 
         After reload, any changes in .env or settings.json will take effect immediately.
         """
         self._loaded = False
         self._ensure_loaded()
+
+        # Reset ModelSelector cache to ensure configuration changes take effect.
+        # This is critical because ModelSelector caches available providers and
+        # detected provider, which depend on environment variables from .env.
+        # Without this reset, changes to .env or settings.json won't be reflected
+        # in downstream code (e.g., generate_image model selection).
+        try:
+            from pantheon.utils.model_selector import reset_model_selector
+
+            reset_model_selector()
+        except ImportError:
+            pass  # model_selector module might not be available
+
+        # Reset PackageManager cache to ensure it uses updated configuration.
+        try:
+            from pantheon.internal.package_runtime import reset_package_manager
+
+            reset_package_manager()
+        except ImportError:
+            pass  # package_runtime module might not be available
+
         logger.info("Settings reloaded successfully")
+
+
+
 
 
 # Global settings instance (lazy loaded)
 _settings: Optional[Settings] = None
 
 
-def get_settings(work_dir: Optional[Path] = None, system_env_vars: Optional[Dict[str, str]] = None) -> Settings:
+def get_settings(work_dir: Optional[Path] = None) -> Settings:
     """
     Get or create the global settings instance.
 
     Args:
         work_dir: Working directory. If provided, creates new instance.
-        system_env_vars: System-level environment variables (injected via CLI).
-                        Auto-classified into sensitive and normal vars.
 
     Returns:
         Settings instance
+
+    Note:
+        API keys should be set via environment variables, .env file, or
+        settings.json api_keys section.
+
+        For secure API key handling, use LiteLLM Proxy mode by setting
+        LITELLM_PROXY_ENABLED environment variable.
     """
     global _settings
 
-    if work_dir is not None or system_env_vars is not None:
+    if work_dir is not None:
         # Create new instance with custom parameters
-        return Settings(work_dir, system_env_vars)
+        return Settings(work_dir)
 
     if _settings is None:
         _settings = Settings()

@@ -43,10 +43,20 @@ def get_package_manager(packages_path: str | Path | None = None) -> PackageManag
     return _DEFAULT_MANAGER
 
 
+def reset_package_manager() -> None:
+    """Reset the global PackageManager cache (used for settings reload).
+
+    Called during Settings.reload() to ensure PackageManager uses the latest configuration.
+    """
+    global _DEFAULT_MANAGER
+    _DEFAULT_MANAGER = None
+
+
 __all__ = [
     "PackageManager",
     "configure_package_manager",
     "get_package_manager",
+    "reset_package_manager",
     "build_context_payload",
     "derive_packages_path",
     "export_context",

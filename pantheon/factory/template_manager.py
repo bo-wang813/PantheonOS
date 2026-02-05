@@ -25,18 +25,14 @@ class TemplateManager:
         Initialize template manager.
 
         Args:
-            work_dir: Working directory for user templates. 
+            work_dir: Working directory for user templates.
                       Defaults to PROJECT_ROOT (captured at module load, before any chdir).
         """
 
         # Get settings instance
         from pantheon.settings import get_settings
         self.settings = get_settings(work_dir)
-        
-        self.work_dir = self.settings.work_dir
-        self.agents_dir = self.settings.agents_dir
-        self.teams_dir = self.settings.teams_dir
-        self.prompts_dir = self.settings.prompts_dir
+
         self.system_templates_dir = Path(__file__).parent / "templates"
 
         self.file_manager = FileBasedTemplateManager(self.work_dir)
@@ -49,6 +45,31 @@ class TemplateManager:
             user_prompts_dir=self.prompts_dir,
             system_prompts_dir=self.system_templates_dir / "prompts",
         )
+
+    @property
+    def work_dir(self) -> Path:
+        """Get work directory from settings (dynamically updated)."""
+        return self.settings.work_dir
+
+    @property
+    def agents_dir(self) -> Path:
+        """Get agents directory from settings (dynamically updated)."""
+        return self.settings.agents_dir
+
+    @property
+    def teams_dir(self) -> Path:
+        """Get teams directory from settings (dynamically updated)."""
+        return self.settings.teams_dir
+
+    @property
+    def prompts_dir(self) -> Path:
+        """Get prompts directory from settings (dynamically updated)."""
+        return self.settings.prompts_dir
+
+    @property
+    def skills_dir(self) -> Path:
+        """Get skills directory from settings (dynamically updated)."""
+        return self.settings.skills_dir
 
     # ===== Bootstrap =====
 
@@ -77,7 +98,7 @@ class TemplateManager:
     def _ensure_directories(self):
         """Ensure user template directories exist"""
         try:
-            for dest_dir in [self.agents_dir, self.teams_dir, self.prompts_dir, self.settings.skills_dir]:
+            for dest_dir in [self.agents_dir, self.teams_dir, self.prompts_dir, self.skills_dir]:
                 dest_dir.mkdir(parents=True, exist_ok=True)
             logger.debug(f"Ensured template directories exist at {self.work_dir}")
         except Exception as e:

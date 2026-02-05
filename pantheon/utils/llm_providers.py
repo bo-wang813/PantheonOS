@@ -298,6 +298,13 @@ async def call_llm_provider(
         remove_metadata,
     )
 
+    logger.debug(
+        f"[CALL_LLM_PROVIDER] Starting LLM call | "
+        f"Provider={config.provider_type.value} | "
+        f"Model={config.model_name} | "
+        f"BaseUrl={config.base_url}"
+    )
+
     # Initialize model_params if None
     model_params = model_params or {}
 
@@ -330,6 +337,10 @@ async def call_llm_provider(
         model_name = config.model_name
         if "/" not in model_name:
             model_name = f"{config.provider_type.value}/{model_name}"
+
+        logger.debug(
+            f"[CALL_LLM_PROVIDER] Using OpenAI provider with model={model_name}"
+        )
         complete_resp = await acompletion_litellm(
             messages=clean_messages,
             model=model_name,
@@ -342,6 +353,9 @@ async def call_llm_provider(
         error_prefix = "OpenAI"
 
     else:  # LITELLM
+        logger.debug(
+            f"[CALL_LLM_PROVIDER] Using LiteLLM provider with model={config.model_name}"
+        )
         complete_resp = await acompletion_litellm(
             messages=clean_messages,
             model=config.model_name,

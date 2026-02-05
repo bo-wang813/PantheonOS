@@ -23,6 +23,7 @@ from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
 from pantheon.internal.package_runtime.context import build_context_env
 
+
 # Terminal control character processing (nbclient-style)
 # Reference: https://github.com/jupyter/nbclient/blob/main/nbclient/client.py
 
@@ -124,12 +125,8 @@ class JupyterKernelToolSet(ToolSet):
         super().__init__(name, **kwargs)
         self.workdir = workdir or os.getcwd()
 
-        # Execution timeout: use provided value, or get from settings
-        if execution_timeout is not None:
-            self.execution_timeout = execution_timeout
-        else:
-            from pantheon.settings import get_settings
-            self.execution_timeout = get_settings().tool_timeout
+        # Store user override - will be resolved dynamically when needed
+        self._execution_timeout_override = execution_timeout
 
         # Kernel management
         self.kernel_managers: Dict[str, AsyncKernelManager] = {}
@@ -141,6 +138,17 @@ class JupyterKernelToolSet(ToolSet):
 
         # IOPub message handlers registry: handler_id -> async callable
         self._iopub_handlers: Dict[str, Callable] = {}
+
+    @property
+    def execution_timeout(self) -> int:
+        """Get execution timeout with priority: user override > settings > default."""
+        if self._execution_timeout_override is not None:
+            return self._execution_timeout_override
+        try:
+            from pantheon.settings import get_settings
+            return get_settings().tool_timeout
+        except Exception:
+            return 3600
 
     def _current_context_dict(self) -> dict:
         ctx = self.get_context()

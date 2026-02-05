@@ -812,15 +812,12 @@ class FileBasedTemplateManager:
         Initialize template manager.
 
         Args:
-            work_dir: Working directory for user templates. 
+            work_dir: Working directory for user templates.
                       Defaults to PROJECT_ROOT (captured at module load, before any chdir).
         """
 
         from pantheon.settings import get_settings
-        settings = get_settings(work_dir)
-        self.work_dir = settings.work_dir
-        self.agents_dir = settings.agents_dir
-        self.teams_dir = settings.teams_dir
+        self.settings = get_settings(work_dir)
 
         # System templates location (in package)
         self.system_templates_dir = Path(__file__).parent / "templates"
@@ -830,6 +827,21 @@ class FileBasedTemplateManager:
 
         # Ensure directories exist
         self._ensure_directories()
+
+    @property
+    def work_dir(self) -> Path:
+        """Get work directory from settings (dynamically updated)."""
+        return self.settings.work_dir
+
+    @property
+    def agents_dir(self) -> Path:
+        """Get agents directory from settings (dynamically updated)."""
+        return self.settings.agents_dir
+
+    @property
+    def teams_dir(self) -> Path:
+        """Get teams directory from settings (dynamically updated)."""
+        return self.settings.teams_dir
 
     def _ensure_directories(self):
         """Ensure user template directories exist"""

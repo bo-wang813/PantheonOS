@@ -141,13 +141,13 @@
     // Model selection for generate_image tool
     // Options: "high", "normal", or specific model name (e.g., "dall-e-3")
     // - "high": gemini/gemini-3-pro-image-preview (best quality)
-    // - "normal": gemini/gemini-2.5-flash-image-preview (balanced)
+    // - "normal": gemini/gemini-3-pro-image-preview (best quality)
     "image_gen_model": "normal",
     // Custom image generation models (optional - override code defaults)
     // "image_gen_models": {
     //     "gemini": {
     //         "high": ["gemini/gemini-3-pro-image-preview"],
-    //         "normal": ["gemini/gemini-2.5-flash-image-preview"]
+    //         "normal": ["gemini/gemini-3-pro-image-preview"]
     //     },
     //     "openai": {
     //         "high": ["dall-e-3"],
@@ -158,7 +158,7 @@
     // Learning is a long-term memory system that learns from conversation trajectories
     "learning": {
         // Enable learning system (extract skills from trajectories of each user request/response run)
-        "enable_learning": false,
+        "enable_learning": true,
         // Enable skill injection into agent system prompts (user_rules, user-defined strategies, high-score skills)
         "enable_injection": true,
         // Enable dynamic skill injection (context injectors), defaults to enable_injection if omitted

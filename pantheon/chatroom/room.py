@@ -1599,7 +1599,7 @@ class ChatRoom(ToolSet):
         - mcp.json (MCP server configuration)
 
         Does NOT reload:
-        - System environment variables (requires Pod restart)
+        - System environment variables (Pod-injected by Hub, requires Pod restart)
 
         Returns:
             dict with success status and message

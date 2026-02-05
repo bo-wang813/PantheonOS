@@ -146,29 +146,83 @@ async def acompletion_litellm(
     model_params: dict | None = None,
     num_retries: int = 3,
 ):
-    litellm = import_litellm()
+    """Call LLM via LiteLLM Proxy (preferred) or traditional API keys (fallback)
 
-    # Prepare arguments for litellm
+    Two modes of operation:
+
+    1. PROXY MODE (Hub-launched agents):
+       - LITELLM_PROXY_ENABLED=true with LITELLM_PROXY_URL and LITELLM_PROXY_KEY
+       - Uses virtual key for authentication to Proxy
+       - Real API keys are hidden in Proxy, not in Pod environment
+       - Fake API keys in environment are for detect_available_provider() only
+
+    2. STANDALONE MODE (agents running independently):
+       - LITELLM_PROXY_ENABLED not set or false
+       - Falls back to reading real API keys from environment variables
+       - Suitable for local development and standalone agent operation
+    """
+    from pantheon.settings import get_settings
+    import os
+
+    litellm = import_litellm()
+    logger.debug(f"[LITELLM.ACOMPLETION] Starting LLM call | Model={model}")
+
+    settings = get_settings()
+
+    # ========== Get Proxy Configuration ==========
+    proxy_enabled = os.environ.get("LITELLM_PROXY_ENABLED", "").lower() == "true"
+    proxy_url = os.environ.get("LITELLM_PROXY_URL")
+    proxy_key = os.environ.get("LITELLM_PROXY_KEY")
+
+    # ========== Prepare LiteLLM Parameters ==========
     kwargs = {
         "model": model,
         "messages": messages,
         "tools": tools,
         "response_format": response_format,
         "stream": True,
-        # Enable usage tracking for all models - LiteLLM automatically handles provider compatibility
         "stream_options": {"include_usage": True},
-        # Enable LiteLLM's built-in retry mechanism with exponential backoff
         "num_retries": num_retries,
     }
 
     if model_params:
         kwargs.update(**model_params)
 
-    # Add base_url if provided (litellm uses api_base parameter)
-    if base_url:
-        kwargs["api_base"] = base_url
+    # ========== Mode Detection & Configuration ==========
+    if proxy_enabled and proxy_url and proxy_key:
+        # PROXY MODE (Hub-launched)
+        # Use Proxy for all API calls with virtual key
+        kwargs["api_base"] = proxy_url
+        kwargs["api_key"] = proxy_key
+        logger.info(
+            f"[LITELLM.ACOMPLETION] Using LiteLLM Proxy mode | URL={proxy_url}"
+        )
+    else:
+        # STANDALONE MODE (litellm reads API keys from environment automatically)
+        # Don't set api_key or api_base - let litellm read from env vars
+        logger.info(
+            f"[LITELLM.ACOMPLETION] Using standalone mode (Proxy not configured, "
+            f"litellm reads API keys from environment)"
+        )
 
-    response = await litellm.acompletion(**kwargs)
+        if base_url:
+            kwargs["api_base"] = base_url
+
+    # ========== Execute Call ==========
+    try:
+        logger.debug(
+            f"[LITELLM.ACOMPLETION] Calling litellm.acompletion with model={model}"
+        )
+        response = await litellm.acompletion(**kwargs)
+        logger.debug(f"[LITELLM.ACOMPLETION] ✓ LiteLLM call succeeded for model={model}")
+    except Exception as e:
+        logger.error(
+            f"[LITELLM.ACOMPLETION] ✗ LiteLLM call failed | "
+            f"Model={model} | Error={type(e).__name__}: {str(e)[:200]}"
+        )
+        raise
+
+    # ========== Stream Processing & Cost Calculation ==========
     collected_chunks = []
     async for chunk in response:
         collected_chunks.append(chunk)
