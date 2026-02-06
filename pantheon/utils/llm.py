@@ -127,6 +127,256 @@ async def acompletion_openai(
     return final_message
 
 
+def _convert_messages_to_responses_input(
+    messages: list[dict],
+) -> tuple[str | None, list[dict]]:
+    """Convert Chat Completions messages to Responses API input format.
+
+    Returns:
+        (instructions, input_items) — the first system message is extracted as
+        ``instructions``; everything else becomes ``input_items``.
+    """
+    instructions: str | None = None
+    input_items: list[dict] = []
+    first_system_seen = False
+
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+
+        if role == "system":
+            if not first_system_seen:
+                instructions = content
+                first_system_seen = True
+            else:
+                input_items.append({"role": "developer", "content": content})
+
+        elif role == "user":
+            input_items.append({"role": "user", "content": content})
+
+        elif role == "assistant":
+            # Text part
+            if content:
+                input_items.append({"role": "assistant", "content": content})
+            # Tool calls → function_call items
+            for tc in msg.get("tool_calls") or []:
+                func = tc.get("function", {})
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": tc["id"],
+                    "name": func.get("name", ""),
+                    "arguments": func.get("arguments", ""),
+                })
+
+        elif role == "tool":
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.get("tool_call_id", ""),
+                "output": content or "",
+            })
+
+    return instructions, input_items
+
+
+def _convert_tools_for_responses(tools: list[dict] | None) -> list[dict] | None:
+    """Flatten Chat Completions tool format to Responses API format.
+
+    From: {"type": "function", "function": {"name": ..., "description": ..., ...}}
+    To:   {"type": "function", "name": ..., "description": ..., ...}
+    """
+    if not tools:
+        return None
+    converted = []
+    for tool in tools:
+        func = tool.get("function", {})
+        item: dict = {"type": "function", "name": func.get("name", "")}
+        if "description" in func:
+            item["description"] = func["description"]
+        if "parameters" in func:
+            item["parameters"] = func["parameters"]
+        if "strict" in func:
+            item["strict"] = func["strict"]
+        converted.append(item)
+    return converted
+
+
+def _convert_model_params_for_responses(model_params: dict | None) -> dict:
+    """Map model_params to Responses API compatible kwargs.
+
+    Conversions:
+    - max_tokens → max_output_tokens
+    - reasoning_effort → {"reasoning": {"effort": value}}
+    - temperature, top_p → pass through
+    - stream_options, num_retries → dropped
+    """
+    if not model_params:
+        return {}
+    result: dict = {}
+    drop_keys = {"stream_options", "num_retries"}
+    for key, value in model_params.items():
+        if key in drop_keys:
+            continue
+        if key == "max_tokens":
+            result["max_output_tokens"] = value
+        elif key == "reasoning_effort":
+            result["reasoning"] = {"effort": value}
+        else:
+            result[key] = value
+    return result
+
+
+async def acompletion_responses(
+    messages: list[dict],
+    model: str,
+    tools: list[dict] | None = None,
+    response_format: Any | None = None,
+    process_chunk: Callable | None = None,
+    base_url: str | None = None,
+    model_params: dict | None = None,
+    num_retries: int = 3,
+) -> dict:
+    """Call OpenAI Responses API with streaming.
+
+    Used for models that require the Responses API (e.g. codex-mini-latest).
+    Returns a normalised message dict compatible with ``extract_message_from_response``.
+    """
+    import os
+    from openai import AsyncOpenAI
+
+    # ========== Build client ==========
+    proxy_enabled = os.environ.get("LITELLM_PROXY_ENABLED", "").lower() == "true"
+    proxy_url = os.environ.get("LITELLM_PROXY_URL")
+    proxy_key = os.environ.get("LITELLM_PROXY_KEY")
+
+    if proxy_enabled and proxy_url and proxy_key:
+        client = AsyncOpenAI(base_url=proxy_url, api_key=proxy_key)
+        logger.info(f"[RESPONSES_API] Using proxy mode | URL={proxy_url}")
+    elif base_url:
+        client = AsyncOpenAI(base_url=base_url)
+    else:
+        client = AsyncOpenAI()
+
+    # ========== Convert inputs ==========
+    instructions, input_items = _convert_messages_to_responses_input(messages)
+    converted_tools = _convert_tools_for_responses(tools)
+    extra_params = _convert_model_params_for_responses(model_params)
+
+    # ========== Build kwargs ==========
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+        "stream": True,
+    }
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    if converted_tools is not None:
+        kwargs["tools"] = converted_tools
+    if response_format is not None:
+        # Responses API uses a "text" parameter for format control
+        kwargs["text"] = response_format
+    kwargs.update(extra_params)
+
+    logger.debug(f"[RESPONSES_API] Calling responses.create | model={model}")
+
+    # ========== Stream ==========
+    text_parts: list[str] = []
+    tool_calls_by_id: dict[str, dict] = {}  # call_id → {name, arguments}
+    # item_id → call_id mapping (arguments.done events only carry item_id)
+    _item_to_call: dict[str, str] = {}
+    response_obj = None
+
+    stream = await client.responses.create(**kwargs)
+    async for event in stream:
+        event_type = event.type
+
+        if event_type == "response.output_text.delta":
+            text_parts.append(event.delta)
+            if process_chunk:
+                await run_func(process_chunk, {"content": event.delta, "role": "assistant"})
+
+        elif event_type == "response.output_item.added":
+            item = event.item
+            if getattr(item, "type", None) == "function_call":
+                call_id = getattr(item, "call_id", "") or ""
+                item_id = getattr(item, "id", "") or ""
+                _item_to_call[item_id] = call_id
+                tool_calls_by_id[call_id] = {
+                    "name": getattr(item, "name", "") or "",
+                    "arguments": "",
+                }
+
+        elif event_type == "response.function_call_arguments.done":
+            # This event carries item_id, not call_id
+            item_id = getattr(event, "item_id", "") or ""
+            call_id = _item_to_call.get(item_id, "")
+            if call_id and call_id in tool_calls_by_id:
+                tool_calls_by_id[call_id]["arguments"] = event.arguments
+                # name may be available here; prefer the one from output_item.added
+                if event.name:
+                    tool_calls_by_id[call_id]["name"] = event.name
+
+        elif event_type == "response.completed":
+            response_obj = event.response
+            if process_chunk:
+                await run_func(process_chunk, {"stop": True})
+
+        elif event_type == "response.failed":
+            error_msg = ""
+            if hasattr(event, "response") and hasattr(event.response, "error"):
+                error_msg = str(event.response.error)
+            raise RuntimeError(f"Responses API call failed: {error_msg}")
+
+        else:
+            logger.debug(f"[RESPONSES_API] Skipping event: {event_type}")
+
+    # ========== Build output message ==========
+    aggregated_text = "".join(text_parts) if text_parts else None
+    final_tool_calls = None
+    if tool_calls_by_id:
+        final_tool_calls = [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": info["name"],
+                    "arguments": info["arguments"],
+                },
+            }
+            for call_id, info in tool_calls_by_id.items()
+        ]
+
+    # ========== Cost estimation ==========
+    cost = 0.0
+    usage_dict = {}
+    if response_obj and hasattr(response_obj, "usage") and response_obj.usage:
+        usage = response_obj.usage
+        input_tokens = getattr(usage, "input_tokens", 0) or 0
+        output_tokens = getattr(usage, "output_tokens", 0) or 0
+        usage_dict = {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+        try:
+            from litellm import completion_cost
+            cost = completion_cost(model=model, prompt_tokens=input_tokens, completion_tokens=output_tokens) or 0.0
+        except Exception:
+            pass
+        if cost == 0.0 and (input_tokens or output_tokens):
+            cost = (input_tokens * 1.0 + output_tokens * 5.0) / 1_000_000
+
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": aggregated_text,
+        "tool_calls": final_tool_calls,
+        "_metadata": {
+            "_debug_cost": cost,
+            "_debug_usage": usage_dict,
+        },
+    }
+    return message
+
+
 def import_litellm():
     warnings.filterwarnings("ignore")
     import litellm
