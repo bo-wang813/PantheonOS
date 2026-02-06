@@ -147,7 +147,9 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g ajv ajv-formats
+    && npm install -g ajv ajv-formats && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/uv
 
 # Set working directory
 WORKDIR /app
@@ -175,6 +177,23 @@ RUN export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright && 
      /app/.venv/bin/playwright install chromium --with-deps) || \
     (unset PLAYWRIGHT_DOWNLOAD_HOST && \
      /app/.venv/bin/playwright install chromium --with-deps)
+
+# ============================================
+# Pre-warm MCP Server Caches
+# ============================================
+# Pre-download and cache MCP servers to avoid first-run installation delays
+# This significantly reduces pod startup time when agents first use these tools
+#
+# Servers:
+# - context7 (npx @upstash/context7-mcp): ~100-200MB cache from npm
+# - biomcp (uv run --with biomcp-python): Python environment cache
+RUN echo "Pre-warming context7 MCP server cache (downloading npm packages)..." && \
+    npm install -g @upstash/context7-mcp && \
+    echo "context7 cache pre-warmed"
+
+RUN echo "Pre-warming biomcp MCP server cache (resolving python dependencies)..." && \
+    uv pip install --python /app/.venv/bin/python biomcp && \
+    echo "biomcp cache pre-warmed"
 
 # ============================================
 # R Packages for Single Cell Analysis (Moved to Runtime)
