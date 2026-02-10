@@ -43,7 +43,7 @@ plt.rcParams.update({
 
 # Setup paths
 example_dir = Path(__file__).parent
-data_dir = example_dir / "data"
+data_dir = example_dir.parent / "data"
 
 
 def load_module(name: str, path: Path):
@@ -314,20 +314,87 @@ def generate_paper_figures():
     print(f"  Saved: {output_dir}/figure3_summary.pdf")
 
     # =========================================================================
-    # Figure 4: Convergence Comparison (SKIPPED - too slow with CPU fallback)
+    # Figure 4: Evolution Progress
     # =========================================================================
-    # Note: Convergence tracking requires running harmony multiple times,
-    # which is too slow with MPS CPU fallback. Uncomment to enable.
-    #
-    # print("\nGenerating Figure 4: Convergence comparison...")
-    # ... (convergence tracking code here)
+    print("\nGenerating Figure 4: Evolution progress...")
+    import json
+
+    # Prefer fixed scores (recomputed with corrected fitness logic)
+    fixed_path = example_dir / "results" / "score_history_fixed.json"
+    state_path = example_dir / "results" / "evolution_state.json"
+
+    if fixed_path.exists():
+        with open(fixed_path, "r") as f:
+            fixed_data = json.load(f)
+        score_history = fixed_data.get("score_history", [])
+        best_score_history = fixed_data.get("best_score_history", [])
+        print("  Using corrected scores from score_history_fixed.json")
+    elif state_path.exists():
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        score_history = state.get("score_history", [])
+        best_score_history = state.get("best_score_history", [])
+        print("  Warning: Using raw scores from evolution_state.json (may contain buggy values)")
+    else:
+        score_history = []
+        best_score_history = []
+
+    if score_history and best_score_history:
+        fig4, ax4 = plt.subplots(figsize=(6, 3))
+
+        iterations = np.arange(len(score_history))
+
+        # Per-iteration fitness as scatter dots
+        ax4.scatter(iterations, score_history, s=6, alpha=0.35,
+                   color='#3C5488', zorder=2, label='Per-iteration fitness',
+                   edgecolors='none', rasterized=True)
+
+        # Running max fitness as a solid line
+        ax4.plot(iterations, best_score_history, color='#E64B35',
+                linewidth=2, zorder=3, label='Best fitness')
+
+        # Mark best iteration with vertical dashed line
+        best_score = max(best_score_history)
+        best_iter = next(i for i, v in enumerate(best_score_history) if v == best_score)
+        ax4.axvline(x=best_iter, color='#E64B35', linestyle='--', linewidth=1, alpha=0.7, zorder=4)
+        ax4.text(best_iter + 3, best_score + 0.002, f'Best (#{best_iter})',
+                 fontsize=8, color='#E64B35', va='bottom')
+
+        # Mark #272 with vertical dashed line
+        ax4.axvline(x=272, color='#3C5488', linestyle='--', linewidth=1, alpha=0.7, zorder=4)
+        ax4.text(272 + 3, best_score + 0.002, f'#272',
+                 fontsize=8, color='#3C5488', va='bottom')
+
+        ax4.set_xlabel("Iteration")
+        ax4.set_ylabel("Fitness Score")
+        ax4.set_title("Evolution Progress", fontweight='bold')
+        ax4.legend(loc='lower right', framealpha=0.9)
+        ax4.set_xlim(0, len(score_history) - 1)
+
+        # Truncate y-axis from initial best to max best (with padding)
+        y_min = best_score_history[0]
+        y_max = max(best_score_history)
+        y_pad = (y_max - y_min) * 0.05
+        ax4.set_ylim(y_min - y_pad, y_max + y_pad)
+
+        plt.tight_layout()
+        fig4_dir = example_dir / "results" / "paper_figures"
+        fig4_dir.mkdir(parents=True, exist_ok=True)
+        fig4.savefig(fig4_dir / "figure4_evolution_progress.pdf",
+                    format='pdf', bbox_inches='tight')
+        fig4.savefig(fig4_dir / "figure4_evolution_progress.png",
+                    format='png', bbox_inches='tight', dpi=300)
+        print(f"  Saved: {fig4_dir}/figure4_evolution_progress.pdf")
+    else:
+        print("  Skipped: no score history data found")
 
     print(f"\n{'='*60}")
-    print("All figures saved to: results_tma/paper_figures/")
+    print(f"All figures saved to: {output_dir}")
     print("Files generated:")
     print("  - figure1_umap_comparison.pdf")
     print("  - figure2_performance.pdf")
     print("  - figure3_summary.pdf")
+    print("  - figure4_evolution_progress.pdf")
     print(f"{'='*60}")
 
     return metrics
