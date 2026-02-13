@@ -285,49 +285,63 @@ async def acompletion_responses(
     _item_to_call: dict[str, str] = {}
     response_obj = None
 
+    from pantheon.agent import StopRunning
+
     stream = await client.responses.create(**kwargs)
-    async for event in stream:
-        event_type = event.type
+    try:
+        async for event in stream:
+            event_type = event.type
 
-        if event_type == "response.output_text.delta":
-            text_parts.append(event.delta)
-            if process_chunk:
-                await run_func(process_chunk, {"content": event.delta, "role": "assistant"})
+            if event_type == "response.output_text.delta":
+                text_parts.append(event.delta)
+                if process_chunk:
+                    await run_func(process_chunk, {"content": event.delta, "role": "assistant"})
 
-        elif event_type == "response.output_item.added":
-            item = event.item
-            if getattr(item, "type", None) == "function_call":
-                call_id = getattr(item, "call_id", "") or ""
-                item_id = getattr(item, "id", "") or ""
-                _item_to_call[item_id] = call_id
-                tool_calls_by_id[call_id] = {
-                    "name": getattr(item, "name", "") or "",
-                    "arguments": "",
-                }
+            elif event_type == "response.output_item.added":
+                item = event.item
+                if getattr(item, "type", None) == "function_call":
+                    call_id = getattr(item, "call_id", "") or ""
+                    item_id = getattr(item, "id", "") or ""
+                    _item_to_call[item_id] = call_id
+                    tool_calls_by_id[call_id] = {
+                        "name": getattr(item, "name", "") or "",
+                        "arguments": "",
+                    }
 
-        elif event_type == "response.function_call_arguments.done":
-            # This event carries item_id, not call_id
-            item_id = getattr(event, "item_id", "") or ""
-            call_id = _item_to_call.get(item_id, "")
-            if call_id and call_id in tool_calls_by_id:
-                tool_calls_by_id[call_id]["arguments"] = event.arguments
-                # name may be available here; prefer the one from output_item.added
-                if event.name:
-                    tool_calls_by_id[call_id]["name"] = event.name
+            elif event_type == "response.function_call_arguments.done":
+                # This event carries item_id, not call_id
+                item_id = getattr(event, "item_id", "") or ""
+                call_id = _item_to_call.get(item_id, "")
+                if call_id and call_id in tool_calls_by_id:
+                    tool_calls_by_id[call_id]["arguments"] = event.arguments
+                    # name may be available here; prefer the one from output_item.added
+                    if event.name:
+                        tool_calls_by_id[call_id]["name"] = event.name
 
-        elif event_type == "response.completed":
-            response_obj = event.response
-            if process_chunk:
-                await run_func(process_chunk, {"stop": True})
+            elif event_type == "response.completed":
+                response_obj = event.response
+                if process_chunk:
+                    await run_func(process_chunk, {"stop": True})
 
-        elif event_type == "response.failed":
-            error_msg = ""
-            if hasattr(event, "response") and hasattr(event.response, "error"):
-                error_msg = str(event.response.error)
-            raise RuntimeError(f"Responses API call failed: {error_msg}")
+            elif event_type == "response.failed":
+                error_msg = ""
+                if hasattr(event, "response") and hasattr(event.response, "error"):
+                    error_msg = str(event.response.error)
+                raise RuntimeError(f"Responses API call failed: {error_msg}")
 
-        else:
-            logger.debug(f"[RESPONSES_API] Skipping event: {event_type}")
+            else:
+                logger.debug(f"[RESPONSES_API] Skipping event: {event_type}")
+    except StopRunning:
+        # Build partial message from text collected so far
+        partial_text = "".join(text_parts) if text_parts else None
+        partial_msg = None
+        if partial_text and partial_text.strip():
+            partial_msg = {
+                "role": "assistant",
+                "content": partial_text,
+                "tool_calls": None,
+            }
+        raise StopRunning(partial_message=partial_msg)
 
     # ========== Build output message ==========
     aggregated_text = "".join(text_parts) if text_parts else None
@@ -473,22 +487,37 @@ async def acompletion_litellm(
         raise
 
     # ========== Stream Processing & Cost Calculation ==========
+    from pantheon.agent import StopRunning
+
     collected_chunks = []
-    async for chunk in response:
-        collected_chunks.append(chunk)
-        if (
-            process_chunk
-            and hasattr(chunk, "choices")
-            and chunk.choices
-            and len(chunk.choices) > 0
-        ):
-            choice = chunk.choices[0]
-            if hasattr(choice, "delta"):
-                delta = choice.delta.model_dump()
-                # LiteLLM provides unified reasoning_content field
-                await run_func(process_chunk, delta)
-            if hasattr(choice, "finish_reason") and choice.finish_reason == "stop":
-                await run_func(process_chunk, {"stop": True})
+    try:
+        async for chunk in response:
+            collected_chunks.append(chunk)
+            if (
+                process_chunk
+                and hasattr(chunk, "choices")
+                and chunk.choices
+                and len(chunk.choices) > 0
+            ):
+                choice = chunk.choices[0]
+                if hasattr(choice, "delta"):
+                    delta = choice.delta.model_dump()
+                    # LiteLLM provides unified reasoning_content field
+                    await run_func(process_chunk, delta)
+                if hasattr(choice, "finish_reason") and choice.finish_reason == "stop":
+                    await run_func(process_chunk, {"stop": True})
+    except StopRunning:
+        # Build partial message from chunks collected so far
+        partial_msg = None
+        if collected_chunks:
+            try:
+                partial_resp = litellm.stream_chunk_builder(collected_chunks)
+                if partial_resp and hasattr(partial_resp, "choices") and partial_resp.choices:
+                    partial_msg = partial_resp.choices[0].message.model_dump()
+                    partial_msg.setdefault("role", "assistant")
+            except Exception:
+                pass
+        raise StopRunning(partial_message=partial_msg)
 
     complete_resp = litellm.stream_chunk_builder(collected_chunks)
 

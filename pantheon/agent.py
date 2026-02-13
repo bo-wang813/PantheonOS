@@ -370,7 +370,15 @@ AgentInput = Union[
 
 
 class StopRunning(Exception):
-    pass
+    """Raised to interrupt a running agent.
+
+    Optionally carries a partial assistant message (dict) that was being
+    streamed when the stop was requested, so callers can persist it.
+    """
+
+    def __init__(self, partial_message: dict | None = None):
+        super().__init__()
+        self.partial_message = partial_message
 
 
 def _get_message_text(message: dict) -> str | None:
@@ -1963,13 +1971,23 @@ class Agent:
                 allow_transfer=allow_transfer,
                 execution_context_id=exec_context.execution_context_id,
             )
-        except StopRunning:
+        except StopRunning as e:
             logger.info("StopRunning")
+            partial_content = ""
             if update_memory and exec_context.memory_instance:
+                # Save partial assistant message if the LLM was mid-stream
+                partial = e.partial_message
+                if partial and isinstance(partial, dict):
+                    content = partial.get("content")
+                    if content and str(content).strip():
+                        partial.setdefault("role", "assistant")
+                        partial["agent_name"] = self.name
+                        exec_context.memory_instance.add_messages([partial])
+                        partial_content = str(content)
                 exec_context.memory_instance.cleanup()
             return AgentResponse(
                 agent_name=self.name,
-                content="",
+                content=partial_content,
                 details=None,
                 interrupt=True,
             )
