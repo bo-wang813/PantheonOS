@@ -1193,9 +1193,11 @@ class Agent:
         provider_config = detect_provider(model, self.force_litellm)
 
         # Step 3: Get base URL from environment if available
-        base_url = get_base_url(provider_config.provider_type)
-        if base_url:
-            provider_config.base_url = base_url
+        # Skip if detect_provider already set base_url (e.g. OpenAI-compatible providers)
+        if not provider_config.base_url:
+            base_url = get_base_url(provider_config.provider_type)
+            if base_url:
+                provider_config.base_url = base_url
 
         # Step 4: Get unified tools (base functions + provider tools)
         tools = None
@@ -1205,15 +1207,28 @@ class Agent:
                 # This includes both base_functions and provider tools
                 tools = await self.get_tools_for_llm() or None
 
-                # For non-OpenAI providers (litellm mode), adjust tool format
-                if provider_config.provider_type.value != "openai" and tools:
+                # For non-OpenAI providers or OpenAI-compatible providers, adjust tool format
+                # OpenAI-compatible providers (e.g. minimax) have api_key set in config
+                is_compat_provider = provider_config.api_key is not None
+                if (provider_config.provider_type.value != "openai" or is_compat_provider) and tools:
                     for tool in tools:
                         if "function" in tool:
-                            # litellm requires strict=False
-                            tool["function"]["strict"] = False
-                            # Remove unsupported additionalProperties
-                            if "parameters" in tool["function"]:
-                                tool["function"]["parameters"].pop(
+                            func = tool["function"]
+                            # Remove strict mode (not supported by non-OpenAI APIs)
+                            func.pop("strict", None)
+                            # Ensure description is non-empty
+                            if not func.get("description"):
+                                func["description"] = func.get("name", "tool")
+                            # Ensure parameters is present (required by some providers e.g. MiniMax)
+                            if "parameters" not in func:
+                                func["parameters"] = {
+                                    "type": "object",
+                                    "properties": {},
+                                    "required": [],
+                                }
+                            else:
+                                # Remove unsupported additionalProperties
+                                func["parameters"].pop(
                                     "additionalProperties", None
                                 )
 

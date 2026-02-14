@@ -34,7 +34,13 @@ class ProviderConfig:
     provider_type: ProviderType
     model_name: str
     base_url: Optional[str] = None
+    api_key: Optional[str] = None
     force_litellm: bool = False
+
+
+# OpenAI-compatible providers that litellm doesn't natively support.
+# Maps provider prefix → (api_base_url, api_key_env_var)
+OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[str, str]] = {}
 
 
 # ============ Provider Detection ============
@@ -54,10 +60,21 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
     Returns:
         ProviderConfig with detected provider and model name
     """
+    base_url = None
+    api_key = None
+
     if "/" in model:
         provider_str, model_name = model.split("/", 1)
+        provider_lower = provider_str.lower()
+
+        # Check if it's an OpenAI-compatible provider (e.g. minimax)
+        if provider_lower in OPENAI_COMPATIBLE_PROVIDERS:
+            provider_type = ProviderType.OPENAI
+            compat_base, compat_key_env = OPENAI_COMPATIBLE_PROVIDERS[provider_lower]
+            base_url = os.environ.get(f"{provider_lower.upper()}_API_BASE", compat_base)
+            api_key = os.environ.get(compat_key_env, "")
         # Check if it's explicitly openai provider
-        if provider_str.lower() == "openai":
+        elif provider_lower == "openai":
             provider_type = ProviderType.OPENAI
         else:
             # All other prefixed models go through LiteLLM (zhipu, anthropic, etc.)
@@ -72,7 +89,11 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
         provider_type = ProviderType.LITELLM
 
     return ProviderConfig(
-        provider_type=provider_type, model_name=model_name, force_litellm=force_litellm
+        provider_type=provider_type,
+        model_name=model_name,
+        base_url=base_url,
+        api_key=api_key or None,
+        force_litellm=force_litellm,
     )
 
 
@@ -381,6 +402,7 @@ async def call_llm_provider(
             response_format=response_format,
             process_chunk=process_chunk,
             base_url=config.base_url,
+            api_key=config.api_key,
             model_params=model_params,
         )
         error_prefix = "OpenAI"

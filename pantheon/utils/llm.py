@@ -407,6 +407,7 @@ async def acompletion_litellm(
     response_format: Any | None = None,
     process_chunk: Callable | None = None,
     base_url: str | None = None,
+    api_key: str | None = None,
     model_params: dict | None = None,
     num_retries: int = 3,
 ):
@@ -471,6 +472,8 @@ async def acompletion_litellm(
 
         if base_url:
             kwargs["api_base"] = base_url
+        if api_key:
+            kwargs["api_key"] = api_key
 
     # ========== Execute Call ==========
     try:

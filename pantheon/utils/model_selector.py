@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # Built-in defaults based on December 2025 flagship models
 # Users can override in settings.json
 
-DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek"]
+DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax"]
 
 # Quality levels map to MODEL LISTS (not single models) for fallback chains
 # Models within each level are ordered by preference
@@ -33,8 +33,8 @@ DEFAULT_PROVIDER_MODELS = {
     # OpenAI: GPT-5 series
     # https://platform.openai.com/docs/models
     "openai": {
-        "high": ["openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5"],
-        "normal": ["openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5", "openai/gpt-4.1"],
+        "high": ["openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5"],
+        "normal": ["openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5", "openai/gpt-4.1"],
         "low": ["openai/gpt-5-mini", "openai/gpt-4.1-mini"],
     },
     # Anthropic: Claude 4.5/4/3.7 series
@@ -65,8 +65,8 @@ DEFAULT_PROVIDER_MODELS = {
     # Z.ai (Zhipu): GLM-4.6/4.5 series
     # https://open.bigmodel.cn/
     "zai": {
-        "high": ["zai/glm-4.6", "zai/glm-4.5", "zai/glm-4.5v"],
-        "normal": ["zai/glm-4.6", "zai/glm-4.5", "zai/glm-4.5v"],
+        "high": ["zai/glm-5", "zai/glm-4.6", "zai/glm-4.5", "zai/glm-4.5v"],
+        "normal": ["zai/glm-5", "zai/glm-4.6", "zai/glm-4.5", "zai/glm-4.5v"],
         "low": ["zai/glm-4.5-air", "zai/glm-4.5-flash"],
     },
     # DeepSeek: V3/R1 series
@@ -75,6 +75,26 @@ DEFAULT_PROVIDER_MODELS = {
         "high": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"],
         "normal": ["deepseek/deepseek-chat"],
         "low": ["deepseek/deepseek-chat"],
+    },
+    # MiniMax: M2.5/M2.1 series
+    # https://platform.minimaxi.com/
+    "minimax": {
+        "high": [
+            "minimax/MiniMax-M2.5-highspeed",
+            "minimax/MiniMax-M2.5",
+            "minimax/MiniMax-M2.1-highspeed",
+            "minimax/MiniMax-M2.1",
+        ],
+        "normal": [
+            "minimax/MiniMax-M2.5-highspeed",
+            "minimax/MiniMax-M2.5",
+            "minimax/MiniMax-M2.1-highspeed",
+            "minimax/MiniMax-M2.1",
+        ],
+        "low": [
+            "minimax/MiniMax-M2.5",
+            "minimax/MiniMax-M2.1",
+        ],
     },
 }
 
@@ -140,6 +160,7 @@ class ModelSelector:
             "openai", "anthropic", "gemini", "google", "azure",
             "cohere", "replicate", "huggingface", "together_ai",
             "openrouter", "groq", "mistral", "deepseek", "bedrock",
+            "minimax", "zai",
         ]
 
         self._available_providers = set()
@@ -176,6 +197,8 @@ class ModelSelector:
             "groq": "GROQ_API_KEY",
             "mistral": "MISTRAL_API_KEY",
             "deepseek": "DEEPSEEK_API_KEY",
+            "minimax": "MINIMAX_API_KEY",
+            "zai": "ZAI_API_KEY",
         }
 
         for provider, env_key in PROVIDER_API_KEYS.items():
