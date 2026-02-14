@@ -401,8 +401,21 @@ class ReplUI:
 
         # Row 1: Team | Sessions
         table.add_row(team_text, session_text)
-        # Row 2: Quick Start (spans visually by leaving right cell empty)
-        table.add_row(quick_start_text, "")
+        # 4. Providers - Show loaded API key providers
+        from pantheon.utils.model_selector import PROVIDER_API_KEYS
+        import os
+
+        loaded = [p for p, env in PROVIDER_API_KEYS.items() if os.environ.get(env, "")]
+        provider_lines = ["[bold]Providers[/bold]"]
+        if loaded:
+            provider_lines.append("[dim]" + ", ".join(loaded) + "[/dim]")
+        else:
+            provider_lines.append("[dim]None detected[/dim]")
+        provider_lines.append("[dim italic]/keys[/dim italic] to manage, [dim italic]~/.pantheon/.env[/dim italic]")
+        provider_text = "\n".join(provider_lines)
+
+        # Row 2: Quick Start | Providers
+        table.add_row(quick_start_text, provider_text)
 
         self.console.print(table)
 
@@ -560,6 +573,9 @@ class ReplUI:
         )
         self.console.print(
             "[dim][bold purple]/model   [/bold purple][/dim] - Show/set model: /model | /model <name|tag>"
+        )
+        self.console.print(
+            "[dim][bold purple]/keys    [/bold purple][/dim] - Show/set API keys: /keys | /keys <n|name> <key>"
         )
         self.console.print()
 

@@ -864,6 +864,12 @@ class Repl(ReplUI):
             await self._handle_model_command(args)
             return
 
+        # API keys command
+        elif cmd_lower == "/keys" or cmd_lower.startswith("/keys "):
+            args = cmd[5:].strip()
+            self._handle_keys_command(args)
+            return
+
         # Verbose mode command
         elif cmd_lower in ["/verbose", "/v"]:
             self.set_display_mode(DisplayMode.VERBOSE)
@@ -1804,6 +1810,69 @@ class Repl(ReplUI):
             self.console.print(f"[green]✅ Switched to:[/green] [bold cyan]{target_agent_name}[/bold cyan]")
         else:
             self.console.print(f"[red]Failed to switch agent: {result.get('message', 'Unknown error')}[/red]")
+
+    def _handle_keys_command(self, args: str):
+        """Handle /keys command - show or set LLM provider API keys.
+
+        Usage:
+            /keys              - List all providers and their status
+            /keys 1 sk-xxx     - Set key by number
+            /keys openai sk-xxx - Set key by provider name
+        """
+        import os
+        from .setup_wizard import PROVIDER_MENU, _save_key_to_env_file
+        from pantheon.utils.model_selector import reset_model_selector
+
+        if not args:
+            # List providers
+            self.console.print()
+            self.console.print("[bold]LLM Provider API Keys[/bold]")
+            self.console.print()
+            for i, (provider_key, display_name, env_var) in enumerate(PROVIDER_MENU, 1):
+                val = os.environ.get(env_var, "")
+                if val:
+                    masked = val[:4] + "..." + val[-4:] if len(val) > 12 else "***"
+                    status = f"[green]{masked}[/green]"
+                else:
+                    status = "[dim]not set[/dim]"
+                self.console.print(f"  [cyan]{i:>2}[/cyan]  {display_name:<16} {env_var:<24} {status}")
+            self.console.print()
+            self.console.print("[dim]Usage: /keys <number|name> <api_key>[/dim]")
+            self.console.print("[dim]Keys are saved to ~/.pantheon/.env[/dim]")
+            self.console.print()
+            return
+
+        # Parse: /keys <provider> <key>
+        parts = args.split(None, 1)
+        if len(parts) < 2:
+            self.console.print("[yellow]Usage: /keys <number|name> <api_key>[/yellow]")
+            return
+
+        provider_arg, api_key = parts[0], parts[1].strip()
+
+        # Resolve provider by number or name
+        target = None
+        if provider_arg.isdigit():
+            idx = int(provider_arg)
+            if 1 <= idx <= len(PROVIDER_MENU):
+                target = PROVIDER_MENU[idx - 1]
+        else:
+            provider_arg_lower = provider_arg.lower()
+            for entry in PROVIDER_MENU:
+                if entry[0] == provider_arg_lower:
+                    target = entry
+                    break
+
+        if not target:
+            self.console.print(f"[red]Unknown provider: {provider_arg}[/red]")
+            self.console.print("[dim]Use /keys to see available providers[/dim]")
+            return
+
+        _, display_name, env_var = target
+        _save_key_to_env_file(env_var, api_key)
+        os.environ[env_var] = api_key
+        reset_model_selector()
+        self.console.print(f"[green]\u2713[/green] {display_name} ({env_var}) saved to ~/.pantheon/.env")
 
     async def _handle_model_command(self, args: str):
         """Handle /model command - list or set model."""

@@ -128,6 +128,26 @@ ULTIMATE_FALLBACK = "gpt-4.1-mini"
 # Recommended fallback tag for general use
 FALLBACK_TAG = "low"
 
+# Provider name -> environment variable for API key
+PROVIDER_API_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "azure": "AZURE_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "replicate": "REPLICATE_API_KEY",
+    "huggingface": "HUGGINGFACE_API_KEY",
+    "together_ai": "TOGETHER_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "zai": "ZAI_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+}
+
 # ============ Image Generation Model Defaults ============
 # Quality levels for image generation models
 DEFAULT_IMAGE_GEN_MODELS = {
@@ -163,27 +183,6 @@ class ModelSelector:
         import os
 
         self._available_providers = set()
-
-        # Check provider API keys directly from environment
-        # (litellm's validate_environment is unreliable - returns True even without keys)
-        PROVIDER_API_KEYS = {
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "gemini": "GEMINI_API_KEY",
-            "google": "GOOGLE_API_KEY",
-            "azure": "AZURE_API_KEY",
-            "cohere": "COHERE_API_KEY",
-            "replicate": "REPLICATE_API_KEY",
-            "huggingface": "HUGGINGFACE_API_KEY",
-            "together_ai": "TOGETHER_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-            "groq": "GROQ_API_KEY",
-            "mistral": "MISTRAL_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
-            "minimax": "MINIMAX_API_KEY",
-            "zai": "ZAI_API_KEY",
-            "moonshot": "MOONSHOT_API_KEY",
-        }
 
         for provider, env_key in PROVIDER_API_KEYS.items():
             api_key_value = os.environ.get(env_key, "")
@@ -598,6 +597,7 @@ __all__ = [
     "get_model_selector",
     "reset_model_selector",
     "get_default_model",
+    "PROVIDER_API_KEYS",
     "CAPABILITY_MAP",
     "QUALITY_TAGS",
     "DEFAULT_PROVIDER_PRIORITY",

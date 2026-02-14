@@ -26,6 +26,8 @@ _ORIGINAL_CWD = os.getcwd()
 
 # Load environment variables from .env file
 load_dotenv()
+# Also load global API keys from ~/.pantheon/.env
+load_dotenv(os.path.join(os.path.expanduser("~"), ".pantheon", ".env"))
 
 # Enable UTF-8 mode on Windows for fancy Unicode characters
 if sys.platform == "win32":
@@ -87,6 +89,11 @@ def start(
     )
     quiet = quiet if quiet is not None else settings.get("repl.quiet", False)
     log_level = log_level or settings.get("repl.log_level", "CRITICAL")
+
+    # Check for API keys and run setup wizard if none found
+    from .setup_wizard import check_and_run_setup
+
+    check_and_run_setup()
 
     asyncio.run(
         _start_async(
