@@ -227,3 +227,4 @@ examples/code_distillation/data/*.npz
 
 .DS_Store
 .uploaded_files/
+*.aux
