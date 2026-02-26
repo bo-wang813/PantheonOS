@@ -122,6 +122,22 @@ def resolve_backend_config(
             except ValueError:
                 logger.warning(f"Invalid NATS_RECONNECT_WAIT value: {reconnect_wait}, using default")
 
+        max_outstanding_pings = os.getenv("NATS_MAX_OUTSTANDING_PINGS")
+        if max_outstanding_pings:
+            try:
+                config["max_outstanding_pings"] = int(max_outstanding_pings)
+                logger.info(f"Configured NATS max_outstanding_pings: {max_outstanding_pings}")
+            except ValueError:
+                logger.warning(f"Invalid NATS_MAX_OUTSTANDING_PINGS value: {max_outstanding_pings}, using default")
+
+        connect_timeout = os.getenv("NATS_CONNECT_TIMEOUT")
+        if connect_timeout:
+            try:
+                config["connect_timeout"] = int(connect_timeout)
+                logger.info(f"Configured NATS connect_timeout: {connect_timeout}s")
+            except ValueError:
+                logger.warning(f"Invalid NATS_CONNECT_TIMEOUT value: {connect_timeout}, using default")
+
     else:
         raise ValueError(f"Unknown backend: {backend}")
 

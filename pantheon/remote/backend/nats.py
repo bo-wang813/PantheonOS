@@ -170,20 +170,55 @@ class NATSBackend(RemoteBackend):
             # Build connection parameters with keepalive config
             connect_params = dict(self.nats_kwargs)
 
-            # Set aggressive ping interval to detect stale connections
-            # Default is 120s, but cloud firewall may drop idle connections after 1-2 hours
+            # Set aggressive ping interval to detect stale connections.
+            # LB/proxy idle timeout is often 30-60s on public internet;
+            # 20s ensures a packet is sent before the LB silently drops the connection.
             if 'ping_interval' not in connect_params:
-                connect_params['ping_interval'] = 30  # Reduced from 120s default
+                connect_params['ping_interval'] = 20
 
+            # 3 missed PONGs = ~60s silence before declaring disconnect.
+            # Raised from 2 to tolerate higher/variable public internet latency.
             if 'max_outstanding_pings' not in connect_params:
-                connect_params['max_outstanding_pings'] = 2
+                connect_params['max_outstanding_pings'] = 3
 
             # Enable infinite reconnection attempts for long-running pods
             if 'max_reconnect_attempts' not in connect_params:
                 connect_params['max_reconnect_attempts'] = -1  # Infinite retries
 
             if 'reconnect_time_wait' not in connect_params:
-                connect_params['reconnect_time_wait'] = 2  # 2 second wait between retries
+                connect_params['reconnect_time_wait'] = 2
+
+            # Default connect_timeout is 2s which is too tight for public internet;
+            # 5s gives enough headroom without delaying failure detection unnecessarily.
+            if 'connect_timeout' not in connect_params:
+                connect_params['connect_timeout'] = 5
+
+            # Use callbacks to handle connection events instead of manual flush health checks.
+            # This avoids the asyncio.InvalidStateError race condition in nats.py _process_pong()
+            # which is triggered when an outer wait_for cancels flush() while a PONG is in-flight.
+            if 'error_cb' not in connect_params:
+                async def _error_cb(e):
+                    # asyncio.InvalidStateError is a known nats.py library bug:
+                    # _process_pong() calls future.set_result() on an already-cancelled future
+                    # when flush() is wrapped in an external wait_for. Safe to ignore.
+                    if isinstance(e, asyncio.InvalidStateError):
+                        return
+                    logger.warning(f"[NATS] Connection error: {e}")
+                connect_params['error_cb'] = _error_cb
+
+            if 'disconnected_cb' not in connect_params:
+                async def _disconnected_cb():
+                    logger.warning("[NATS] Disconnected from server")
+                connect_params['disconnected_cb'] = _disconnected_cb
+
+            if 'reconnected_cb' not in connect_params:
+                async def _reconnected_cb():
+                    # self._nc is guaranteed to be set here because reconnected_cb
+                    # is only triggered after the initial connect() returns and
+                    # the client has already assigned self._nc.
+                    url = self._nc.connected_url if self._nc else "unknown"
+                    logger.info(f"[NATS] Reconnected to {url}")
+                connect_params['reconnected_cb'] = _reconnected_cb
 
             logger.info(f"[NATS] Connecting to {self.server_urls} with ping_interval={connect_params['ping_interval']}s")
             self._nc = await nats.connect(servers=self.server_urls, **connect_params)
@@ -493,7 +528,7 @@ class NATSRemoteWorker(RemoteWorker):
             asyncio.create_task(self._register_to_kv_store())
 
     async def run(self):
-        """Start worker with connection health monitoring"""
+        """Start worker. Connection health is managed by NATS client's built-in ping/reconnect."""
         logger.info(f"[NATSWorker.run] Starting worker for subject: {self.service_subject}")
         if self.nc is None:
             logger.info(f"[NATSWorker.run] Connecting to NATS: {self._backend.server_urls}")
@@ -514,93 +549,13 @@ class NATSRemoteWorker(RemoteWorker):
         if hasattr(self, '_on_ready') and self._on_ready:
             self._on_ready.set()
 
-        # Start connection health monitor in background
-        monitor_task = asyncio.create_task(self._monitor_connection_health())
-
-        try:
-            while self._running:
-                await asyncio.sleep(1)
-        finally:
-            monitor_task.cancel()
-            try:
-                await monitor_task
-            except asyncio.CancelledError:
-                pass
-
-    async def _monitor_connection_health(self):
-        """Monitor NATS connection health and auto-reconnect if needed"""
-        consecutive_failures = 0
-        max_failures = 3
-
+        # NATS client handles health via ping_interval=20s / max_outstanding_pings=3.
+        # After 3 missed PONGs (~60s silence) it auto-disconnects and reconnects,
+        # replaying all subscriptions automatically. No manual monitor task needed.
         while self._running:
-            try:
-                await asyncio.sleep(60)  # Check every 60 seconds
+            await asyncio.sleep(1)
 
-                if self.nc is None or self.nc.is_closed:
-                    logger.warning("[ConnectionMonitor] NATS connection is closed, attempting to reconnect...")
-                    await self._reconnect_nats()
-                    consecutive_failures = 0
-                else:
-                    # Try to flush (sends buffered data and waits for ack)
-                    # This detects broken TCP connections
-                    try:
-                        await asyncio.wait_for(
-                            self.nc.flush(),
-                            timeout=5.0
-                        )
-                        logger.debug(f"[ConnectionMonitor] NATS connection health check passed")
-                        consecutive_failures = 0
-                    except asyncio.TimeoutError:
-                        consecutive_failures += 1
-                        logger.warning(f"[ConnectionMonitor] NATS flush timeout ({consecutive_failures}/{max_failures})")
-                        if consecutive_failures >= max_failures:
-                            logger.error("[ConnectionMonitor] Max flush timeouts reached, reconnecting...")
-                            await self._reconnect_nats()
-                            consecutive_failures = 0
-                    except Exception as e:
-                        consecutive_failures += 1
-                        logger.warning(f"[ConnectionMonitor] Flush check failed ({consecutive_failures}/{max_failures}): {e}")
-                        if consecutive_failures >= max_failures:
-                            logger.error("[ConnectionMonitor] Max failures reached, reconnecting...")
-                            await self._reconnect_nats()
-                            consecutive_failures = 0
 
-            except asyncio.CancelledError:
-                logger.debug("[ConnectionMonitor] Monitor task cancelled")
-                break
-            except Exception as e:
-                logger.error(f"[ConnectionMonitor] Unexpected error: {e}")
-                await asyncio.sleep(5)
-
-    async def _reconnect_nats(self):
-        """Attempt to reconnect NATS connection"""
-        try:
-            if self._subscription:
-                try:
-                    await self._subscription.unsubscribe()
-                except Exception as e:
-                    logger.debug(f"Error unsubscribing during reconnect: {e}")
-                self._subscription = None
-
-            if self.nc and not self.nc.is_closed:
-                try:
-                    await self.nc.close()
-                except Exception as e:
-                    logger.debug(f"Error closing old connection: {e}")
-
-            logger.info(f"[Reconnect] Establishing new NATS connection to {self._backend.server_urls}...")
-            self.nc, _ = await self._backend._get_connection()
-            logger.info(f"[Reconnect] Successfully reconnected to NATS: {self.nc.connected_url}")
-
-            # Re-subscribe to service subject
-            self._subscription = await self.nc.subscribe(
-                self.service_subject, cb=self._handle_request
-            )
-            logger.info(f"[Reconnect] Re-subscribed to service subject: {self.service_subject}")
-
-        except Exception as e:
-            logger.error(f"[Reconnect] Failed to reconnect: {e}")
-            # Connection will retry automatically due to NATS client's built-in reconnection
 
     async def stop(self):
         """Stop worker"""
