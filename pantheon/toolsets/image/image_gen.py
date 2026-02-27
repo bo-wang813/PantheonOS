@@ -2,7 +2,7 @@
 Image Generation ToolSet.
 
 Provides image generation capabilities via generate_image tool.
-Supports text-only models (DALL-E, Imagen), multimodal models (Gemini Flash Image),
+Supports text-only models (DALL-E, Imagen), multimodal models (Gemini Nano Banana series),
 and native image editing models (OpenAI gpt-image).
 """
 
@@ -19,9 +19,11 @@ from pantheon.utils.vision import (
 )
 
 # Multimodal models that support image input + output via acompletion API
+# Gemini Nano Banana series: Pro / Nano Banana 2 / Nano Banana first-gen
 MULTIMODAL_IMAGE_MODELS = {
-    "gemini/gemini-3-pro-image-preview",
-    "gemini/gemini-2.0-flash-exp-image-generation",
+    "gemini/gemini-3-pro-image-preview",      # Nano Banana Pro
+    "gemini/gemini-3.1-flash-image-preview",  # Nano Banana 2
+    "gemini/gemini-2.5-flash-image",          # Nano Banana first-gen
 }
 
 # Models that support native image editing via aimage_edit API (accept reference images)
@@ -42,7 +44,7 @@ class ImageGenerationToolSet(ToolSet):
     ):
         super().__init__(name)
         self._image_store: ImageStore | None = None
-        self.fallback_vision_model = fallback_vision_model or "gemini/gemini-2.0-flash"
+        self.fallback_vision_model = fallback_vision_model or "gemini/gemini-2.5-flash"
 
     @property
     def default_model(self) -> str:

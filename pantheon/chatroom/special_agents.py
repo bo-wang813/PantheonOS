@@ -103,6 +103,7 @@ class SummaryGenerator:
         if not self._summary_agent:
             self._summary_agent = Agent(
                 name="SummaryGen",
+                model="low",
                 instructions="""You are a context summarizer for agent delegation.
 
 Your task: Extract and summarize the parent agent's conversation history to provide sub-agents with essential context for task execution.

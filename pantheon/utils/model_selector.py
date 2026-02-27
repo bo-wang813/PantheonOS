@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pantheon.settings import Settings
 
 # ============ Default Configuration ============
-# Built-in defaults based on December 2025 flagship models
+# Built-in defaults based on February 2026 flagship models
 # Users can override in settings.json
 
 DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot"]
@@ -30,37 +30,36 @@ DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek",
 # Quality levels map to MODEL LISTS (not single models) for fallback chains
 # Models within each level are ordered by preference
 DEFAULT_PROVIDER_MODELS = {
-    # OpenAI: GPT-5 series
+    # OpenAI: GPT-5.2 series
     # https://platform.openai.com/docs/models
     "openai": {
-        "high": ["openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5"],
-        "normal": ["openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5.1", "openai/gpt-5", "openai/gpt-4.1"],
-        "low": ["openai/gpt-5-mini", "openai/gpt-4.1-mini"],
+        "high": ["openai/gpt-5.2-pro", "openai/gpt-5.2", "openai/gpt-5"],
+        "normal": ["openai/gpt-5.2-codex", "openai/gpt-5.2", "openai/gpt-5"],
+        "low": ["openai/gpt-5-mini", "openai/gpt-5-nano", "openai/gpt-4.1-mini"],
     },
-    # Anthropic: Claude 4.5/4/3.7 series
+    # Anthropic: Claude 4.6 series
     # https://docs.anthropic.com/en/docs/about-claude/models/overview
     "anthropic": {
         "high": [
+            "anthropic/claude-opus-4-6",
             "anthropic/claude-opus-4-5-20251101",
-            "anthropic/claude-opus-4-1-20250805",
             "anthropic/claude-opus-4-20250514",
         ],
         "normal": [
+            "anthropic/claude-sonnet-4-6",
             "anthropic/claude-sonnet-4-5-20250929",
             "anthropic/claude-sonnet-4-20250514",
-            "anthropic/claude-3-7-sonnet-20250219",
         ],
         "low": [
-            "anthropic/claude-haiku-4-5-20251001",
-            "anthropic/claude-3-5-haiku-20241022",
+            "anthropic/claude-haiku-4-5",
         ],
     },
-    # Gemini: Gemini 3/2.5 series
+    # Gemini: Gemini 3.1/3/2.5 series
     # https://ai.google.dev/gemini-api/docs/models
     "gemini": {
-        "high": ["gemini/gemini-3-pro-preview", "gemini/gemini-2.5-pro-preview"],
-        "normal": ["gemini/gemini-3-flash-preview"],
-        "low": ["gemini/gemini-2.5-flash-lite-preview"],
+        "high": ["gemini/gemini-3.1-pro-preview", "gemini/gemini-3-pro-preview", "gemini/gemini-2.5-pro"],
+        "normal": ["gemini/gemini-3-flash-preview", "gemini/gemini-2.5-flash"],
+        "low": ["gemini/gemini-3-flash-preview", "gemini/gemini-2.5-flash-lite"],
     },
     # Z.ai (Zhipu): GLM-4.6/4.5 series
     # https://open.bigmodel.cn/
@@ -151,13 +150,19 @@ PROVIDER_API_KEYS = {
 # ============ Image Generation Model Defaults ============
 # Quality levels for image generation models
 DEFAULT_IMAGE_GEN_MODELS = {
+    # Gemini: Nano Banana series
+    # https://ai.google.dev/gemini-api/docs/image-generation
     "gemini": {
-        "high": ["gemini/gemini-3-pro-image-preview"],
-        "normal": ["gemini/gemini-3-pro-image-preview"],
+        "high": ["gemini/gemini-3-pro-image-preview"],                                        # Nano Banana Pro
+        "normal": ["gemini/gemini-3.1-flash-image-preview", "gemini/gemini-2.5-flash-image"], # Nano Banana 2 / first-gen
+        "low": ["gemini/gemini-2.5-flash-image"],                                             # Nano Banana first-gen
     },
+    # OpenAI: GPT-Image series
+    # https://platform.openai.com/docs/models
     "openai": {
         "high": ["chatgpt-image-latest", "gpt-image-1.5"],
         "normal": ["chatgpt-image-latest", "gpt-image-1.5"],
+        "low": ["gpt-image-1"],
     },
 }
 
