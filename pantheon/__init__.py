@@ -16,6 +16,11 @@ try:
 except ImportError:
     pass  # OK if not installed
 
+try:
+    import fastapi  # noqa: F401 — suppress HTTP_422 DeprecationWarning at import time
+except ImportError:
+    pass
+
 # Suppress litellm debug output via env vars (avoid importing litellm at startup,
 # it costs ~1.5s. The actual suppress_debug_info/set_verbose flags are set in
 # utils/llm.py:import_litellm() the first time litellm is actually used.)

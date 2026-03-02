@@ -65,6 +65,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+pantheon = "pantheon.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/aristoteleo/pantheon-agents"
 Repository = "https://github.com/aristoteleo/pantheon-agents"
