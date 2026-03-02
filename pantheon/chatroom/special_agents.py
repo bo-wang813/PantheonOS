@@ -382,7 +382,9 @@ class ChatNameGenerator:
             logger.warning(f"AI name generation failed: {e}")
 
         # Fallback to simple extraction
-        return self._fallback_name(agent_messages)
+        fallback = self._fallback_name(agent_messages)
+        self._update_metadata(memory, len(agent_messages))
+        return fallback
 
     def _should_generate_name(
         self, memory: Memory, messages: List[Dict[str, Any]]

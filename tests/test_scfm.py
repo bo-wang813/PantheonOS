@@ -1342,11 +1342,11 @@ class TestNewModelsInRegistry:
         assert Modality.MULTIOMICS in spec.modalities
 
     def test_registry_model_count(self):
-        """Registry should have 21 models total (9 core + 12 specialized)"""
+        """Registry should have 22 models total (9 core + 13 specialized)"""
         registry = get_registry()
         models = registry.list_models(skill_ready_only=False)
-        # 9 core models + 12 Specialized & Emerging (2024-2025)
-        assert len(models) == 21
+        # 9 core models + 13 Specialized & Emerging (2024-2025)
+        assert len(models) == 22
 
 
 # =============================================================================

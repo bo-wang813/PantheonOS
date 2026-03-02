@@ -59,7 +59,7 @@ class TestToolSetBasics:
     def test_init(self, image_toolset):
         """Test toolset initialization."""
         assert image_toolset is not None
-        assert image_toolset.fallback_vision_model == "gemini/gemini-2.0-flash"
+        assert image_toolset.fallback_vision_model == "gemini/gemini-2.5-flash"
     
     def test_multimodal_model_detection(self, image_toolset):
         """Test multimodal model detection."""
