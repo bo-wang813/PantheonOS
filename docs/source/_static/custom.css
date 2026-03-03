@@ -430,14 +430,44 @@ html .pst-navbar-icon:focus::before {
     text-decoration: none !important;
 }
 
+/* ===== Scrollbar (dark mode) ===== */
+html[data-theme="dark"] ::-webkit-scrollbar-track {
+    background: #1a1a2e !important;
+}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #333 !important;
+    border-radius: 4px !important;
+}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: #444 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    ::-webkit-scrollbar-track {
+        background: #1a1a2e !important;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #333 !important;
+        border-radius: 4px !important;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #444 !important;
+    }
+}
+
 /* ===== Misc ===== */
 html { scroll-behavior: smooth; }
 
 ::selection { background: rgba(91, 95, 199, 0.2); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+html[data-theme="light"] ::-webkit-scrollbar-track { background: transparent !important; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cbd5e1 !important; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #94a3b8 !important; }
 
 /* Line numbers */
 .highlight .linenos {

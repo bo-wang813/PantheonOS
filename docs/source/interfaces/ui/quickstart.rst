@@ -1,7 +1,7 @@
 ChatRoom Quick Start
 ====================
 
-Get the web UI running in under 2 minutes.
+Get the web UI running in under a minute.
 
 Prerequisites
 -------------
@@ -14,32 +14,29 @@ Step 1: Start ChatRoom
 
 .. code-block:: bash
 
-   pantheon ui
+   pantheon ui --auto-start-nats --auto-ui
+
+This will:
+
+- Start a local NATS messaging server
+- Launch the ChatRoom backend
+- Open the web UI in your browser (auto-connected)
 
 You'll see output like:
 
 .. code-block:: text
 
-   ╭─────────────────────────────────────╮
-   │ ChatRoom started!                   │
-   │                                     │
-   │ Service ID: abc123-def456-...       │
-   │                                     │
-   │ Connect at:                         │
-   │ https://pantheon-ui.vercel.app/     │
-   ╰─────────────────────────────────────╯
+   [STARTUP] Auto-starting local NATS server...
+   ✓ NATS server started successfully
+     TCP URL: nats://localhost:4222
+     WebSocket URL: ws://127.0.0.1:8080
+   [STARTUP] Worker is ready, opening browser...
+   [FRONTEND] ✓ Browser opened successfully
 
-Step 2: Connect the Web UI
---------------------------
-
-1. Open https://pantheon-ui.vercel.app/ in your browser
-2. Paste the service ID from the terminal
-3. Click "Connect"
-
-Step 3: Start Chatting
+Step 2: Start Chatting
 ----------------------
 
-Type your message in the chat input and press Enter. The agent will respond.
+The browser opens automatically with the connection pre-configured. Type your message and press Enter.
 
 Using Team Templates
 --------------------
@@ -48,7 +45,7 @@ ChatRoom uses team templates from ``.pantheon/teams/``. To use a specific templa
 
 .. code-block:: bash
 
-   pantheon ui --template data_research_team
+   pantheon ui --auto-start-nats --auto-ui --template data_research_team
 
 Available options:
 
@@ -58,7 +55,7 @@ Available options:
    ls .pantheon/teams/
 
    # Use a template
-   pantheon ui --template <template_name>
+   pantheon ui --auto-start-nats --auto-ui --template <template_name>
 
 Creating Your First Template
 ----------------------------
@@ -72,10 +69,8 @@ Create a file ``.pantheon/teams/my_team.md``:
    icon: 🤖
    agents:
      - name: assistant
-       model: openai/gpt-4o-mini
        instructions: You are a helpful assistant.
      - name: coder
-       model: openai/gpt-4o
        instructions: You are a coding expert.
        toolsets:
          - python_interpreter
@@ -90,30 +85,31 @@ Then start with your template:
 
 .. code-block:: bash
 
-   pantheon ui --template my_team
+   pantheon ui --auto-start-nats --auto-ui --template my_team
 
-Common Options
---------------
+Connecting to a Remote NATS Server
+-----------------------------------
+
+If you have a remote NATS server, you can connect directly without auto-starting a local one:
 
 .. code-block:: bash
 
-   # Use specific memory directory
-   pantheon ui --memory-dir ./my_chats
+   pantheon ui --nats-servers "wss://your-server.com/nats"
 
-   # Use specific template
-   pantheon ui --template developer_team
-
-   # Quiet mode
-   pantheon ui --quiet
+In this mode, you need to open the web UI manually and provide the service ID displayed in the terminal.
 
 Troubleshooting
 ---------------
 
-**Connection Failed**
+**Browser Didn't Open**
 
-- Check that the ChatRoom is still running
-- Verify the service ID was copied correctly
-- Check for firewall issues
+- Check the terminal for the connection URL and open it manually
+- Ensure ``--auto-start-nats`` is used together with ``--auto-ui``
+
+**NATS Server Failed to Start**
+
+- Check if another NATS instance is already running on port 4222 or 8080
+- Try ``--log-level DEBUG`` for more details
 
 **Agent Not Responding**
 

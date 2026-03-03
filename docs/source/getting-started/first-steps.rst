@@ -40,11 +40,8 @@ The ChatRoom provides a web-based interface accessible from any browser.
 
 .. code-block:: bash
 
-   # Start the server
-   pantheon ui
-
-   # Then open in browser:
-   # https://pantheon-ui.vercel.app/
+   # Start the multi-agent chatroom
+   pantheon ui --auto-start-nats --auto-ui
 
 **Features:**
 

@@ -21,7 +21,7 @@ Overview
    * - **Web UI**
      - Browser-based visual interface
      - Demos, daily use
-     - ``pantheon ui``
+     - ``pantheon ui --auto-start-nats --auto-ui``
    * - **Python API**
      - Full programmatic control
      - Integrations, custom apps
@@ -72,15 +72,16 @@ Web UI
 
 .. code-block:: bash
 
-   pantheon ui
+   pantheon ui --auto-start-nats --auto-ui
 
-Then open https://pantheon-ui.vercel.app/ and connect with the displayed service ID.
+Starts a local NATS server and opens the web UI in your browser automatically.
 
 Features:
 
 - Visual interface
 - File uploads
 - Session management
+- Auto-connect
 
 Python API
 ~~~~~~~~~~
@@ -131,10 +132,3 @@ Choosing an Interface
 - You need to integrate with other code
 - You want maximum flexibility
 
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   repl/index
-   ui/index
-   api/index

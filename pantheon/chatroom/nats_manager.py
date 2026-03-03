@@ -116,7 +116,7 @@ class NATSManager:
         ]:
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("127.0.0.1", port))
+                    s.bind(("0.0.0.0", port))
                 logger.debug(f"Port {port_name}:{port} is available")
             except OSError as e:
                 logger.debug(f"Port {port_name}:{port} is occupied: {e}")
@@ -141,7 +141,7 @@ class NATSManager:
         for port in range(start_port, start_port + max_attempts):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("127.0.0.1", port))
+                    s.bind(("0.0.0.0", port))
                 logger.debug(f"Found available port: {port}")
                 return port
             except OSError:
@@ -369,16 +369,28 @@ class NATSManager:
         logger.info("[NATS] Waiting for server to be ready...")
         if not await self.wait_for_ready(timeout=30):
             logger.error("[NATS] Server failed to start within timeout, terminating...")
-            self._process.terminate()
+            if self._process.returncode is None:
+                self._process.terminate()
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    logger.warning("[NATS] Process did not terminate, force killing...")
+                    self._process.kill()
+            else:
+                logger.error(f"[NATS] Process already exited with code {self._process.returncode}")
+
+            # Read last few lines of log for better error context
+            log_tail = ""
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=2)
-            except asyncio.TimeoutError:
-                logger.warning("[NATS] Process did not terminate, force killing...")
-                self._process.kill()
+                lines = log_file.read_text(encoding="utf-8").strip().splitlines()
+                log_tail = "\n".join(lines[-5:])
+            except Exception:
+                pass
 
             raise ConnectionError(
-                f"NATS server failed to start within 30s.\n"
-                f"Check logs: {log_file}"
+                f"NATS server failed to start.\n"
+                f"Log file: {log_file}\n"
+                f"Last log lines:\n{log_tail}"
             )
 
         # 7. Return connection info

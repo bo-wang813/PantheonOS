@@ -79,7 +79,7 @@ Create ``.pantheon/agents/my_assistant.md``:
    pantheon cli --template my_assistant
 
    # ChatRoom
-   pantheon ui --template my_assistant
+   pantheon ui --auto-start-nats --auto-ui --template my_assistant
 
 .. code-block:: python
 
@@ -107,11 +107,3 @@ Next Steps
 - :doc:`mcp` - MCP server configuration
 - :doc:`models` - Model selection and fallbacks
 
-.. toctree::
-   :hidden:
-   :maxdepth: 2
-
-   settings
-   templates/index
-   mcp
-   models

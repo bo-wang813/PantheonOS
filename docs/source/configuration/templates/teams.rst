@@ -320,7 +320,7 @@ Usage
 
 .. code-block:: bash
 
-   pantheon ui --template developer_team
+   pantheon ui --auto-start-nats --auto-ui --template developer_team
 
 **Python API:**
 
