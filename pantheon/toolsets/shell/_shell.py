@@ -105,6 +105,9 @@ class AsyncCommandLineInterpreter(abc.ABC):
             if self.filter_out_line(line, marker):
                 continue
             output_lines.append(line)
+            # Report each line to background task buffer (no-op if not in bg context)
+            from pantheon.background import _bg_report
+            _bg_report(line.rstrip("\n"))
         return "".join(output_lines), finished
 
     def stop_on_line(self, line: str, marker: str) -> bool:
