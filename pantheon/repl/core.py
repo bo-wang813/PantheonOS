@@ -228,6 +228,38 @@ class Repl(ReplUI):
             else:
                 self.console.print(f"[red]Template file not found: {p}[/red]")
 
+    def _setup_bg_complete_hooks(self):
+        """Hook background task completion into REPL message queue.
+
+        When a background task finishes, a notification is pushed to the
+        message_queue so the agent automatically processes it on the next turn.
+        """
+        if not self._team or not self.message_queue:
+            return
+
+        queue = self.message_queue
+
+        def _on_bg_complete(bg_task):
+            status = bg_task.status
+            result_preview = ""
+            if bg_task.result is not None:
+                result_preview = str(bg_task.result)[:200]
+            elif bg_task.error:
+                result_preview = bg_task.error[:200]
+
+            notif = (
+                f"[Background task '{bg_task.task_id}' ({bg_task.tool_name}) "
+                f"{status}. Result: {result_preview}]"
+            )
+            try:
+                queue.put_nowait(notif)
+            except Exception:
+                pass
+
+        for agent in self._team.agents.values():
+            if hasattr(agent, "_bg_manager"):
+                agent._bg_manager.on_complete = _on_bg_complete
+
     def _setup_signal_handlers(self):
         """Setup signal handlers for better interrupt management."""
         self._interrupt_count = 0
@@ -587,7 +619,9 @@ class Repl(ReplUI):
         if self._team is None:
             self._team = await self._chatroom.get_team_for_chat(self._chat_id, save_to_memory=False)
             self._is_multi_agent = len(self._team.agents) > 1
-        
+            # Hook background task completion → REPL message queue
+            self._setup_bg_complete_hooks()
+
         # Start ChatRoom setup in background (MCP servers, etc.)
         # This runs after UI is shown, so user sees REPL immediately
         # After setup, warm up tools cache and LLM connection to reduce first-message latency

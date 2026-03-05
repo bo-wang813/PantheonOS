@@ -11,9 +11,12 @@ import asyncio
 import builtins
 import contextvars
 import io
+import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 
 # Per-asyncio-task output buffer (None = not capturing)
@@ -91,6 +94,10 @@ class BackgroundTaskManager:
         self._max_retained = max_retained
         self._adopted_tasks: set[int] = set()  # id() of adopted asyncio.Tasks
         self._completed_notifications: list[BackgroundTask] = []
+        # Callback fired when any task completes/fails/cancels.
+        # Signature: on_complete(bg_task: BackgroundTask) -> None
+        # Consumers (REPL, API, SDK) set this to react to completions.
+        self.on_complete: Callable[[BackgroundTask], None] | None = None
         # Ensure print hook is active
         _install_print_hook()
 
@@ -189,6 +196,13 @@ class BackgroundTaskManager:
 
         # Queue notification for agent auto-reporting
         self._completed_notifications.append(bg_task)
+
+        # Fire external callback
+        if self.on_complete is not None:
+            try:
+                self.on_complete(bg_task)
+            except Exception as e:
+                logger.warning(f"on_complete callback error: {e}")
 
         self._evict_old()
 

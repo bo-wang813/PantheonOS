@@ -452,6 +452,66 @@ class TestNotificationQueue:
 
 
 # =============================================================================
+# on_complete callback tests
+# =============================================================================
+
+
+class TestOnCompleteCallback:
+    @pytest.fixture
+    def manager(self):
+        return BackgroundTaskManager(max_retained=50)
+
+    @pytest.mark.asyncio
+    async def test_on_complete_called_on_success(self, manager):
+        """on_complete fires when task completes successfully."""
+        received = []
+        manager.on_complete = lambda t: received.append(t)
+
+        async def _work():
+            return "done"
+
+        bg = manager.start("tool", "tc", {}, _work())
+        await asyncio.sleep(0.1)
+
+        assert len(received) == 1
+        assert received[0].task_id == bg.task_id
+        assert received[0].status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_on_complete_called_on_failure(self, manager):
+        """on_complete fires when task fails."""
+        received = []
+        manager.on_complete = lambda t: received.append(t)
+
+        async def _fail():
+            raise RuntimeError("oops")
+
+        manager.start("tool", "tc", {}, _fail())
+        await asyncio.sleep(0.1)
+
+        assert len(received) == 1
+        assert received[0].status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_on_complete_error_does_not_break(self, manager):
+        """If on_complete raises, task lifecycle is unaffected."""
+
+        def _bad_callback(t):
+            raise ValueError("callback error")
+
+        manager.on_complete = _bad_callback
+
+        async def _work():
+            return "ok"
+
+        bg = manager.start("tool", "tc", {}, _work())
+        await asyncio.sleep(0.1)
+
+        assert bg.status == "completed"
+        assert bg.result == "ok"
+
+
+# =============================================================================
 # Contextvar isolation tests
 # =============================================================================
 
