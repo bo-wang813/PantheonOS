@@ -1566,6 +1566,16 @@ class ChatRoom(ToolSet):
 
             # 5. Persist to template file (if source_path exists)
             source_path = getattr(team, "_source_path", None)
+            if not source_path:
+                # Fallback: look up source_path from template manager
+                team_id = getattr(team, "_team_id", None) or "default"
+                try:
+                    original = self.template_manager.get_template(team_id)
+                    if original and original.source_path:
+                        source_path = original.source_path
+                        team._source_path = source_path
+                except Exception:
+                    pass
             if source_path:
                 from pathlib import Path
 
@@ -1577,8 +1587,11 @@ class ChatRoom(ToolSet):
                         original_team = file_manager._read_team_from_path(template_path)
 
                         # Update the agent's model in template
+                        # Compare case-insensitively: runtime agent name may differ
+                        # in casing from the template id (e.g. "Leader" vs "leader")
+                        agent_name_lower = agent_name.lower()
                         for agent_cfg in original_team.agents:
-                            if agent_cfg.name == agent_name or agent_cfg.id == agent_name:
+                            if (agent_cfg.name or "").lower() == agent_name_lower or (agent_cfg.id or "").lower() == agent_name_lower:
                                 agent_cfg.model = model  # Store original input (tag or model name)
                                 break
 
@@ -1595,9 +1608,9 @@ class ChatRoom(ToolSet):
             memory = await run_func(self.memory_manager.get_memory, chat_id)
             team_template = memory.extra_data.get("team_template", {})
 
-            # Update the agent's model in template
+            # Update the agent's model in template (case-insensitive match)
             for agent_config in team_template.get("agents", []):
-                if agent_config.get("name") == agent_name:
+                if (agent_config.get("name") or "").lower() == agent_name_lower or (agent_config.get("id") or "").lower() == agent_name_lower:
                     agent_config["model"] = (
                         model  # Store original input (tag or model name)
                     )

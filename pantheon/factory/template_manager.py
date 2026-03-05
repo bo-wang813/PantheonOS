@@ -105,71 +105,106 @@ class TemplateManager:
             logger.error(f"Failed to create template directories: {e}")
             raise
 
+    def _load_factory_hashes(self) -> dict:
+        """Load stored factory file hashes from .pantheon/.factory_hashes.json."""
+        import json
+        hash_file = self.settings.pantheon_dir / ".factory_hashes.json"
+        if hash_file.exists():
+            try:
+                return json.loads(hash_file.read_text(encoding="utf-8"))
+            except Exception:
+                return {}
+        return {}
+
+    def _save_factory_hashes(self, hashes: dict):
+        """Save factory file hashes to .pantheon/.factory_hashes.json."""
+        import json
+        hash_file = self.settings.pantheon_dir / ".factory_hashes.json"
+        hash_file.write_text(json.dumps(hashes, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _file_hash(path: Path) -> str:
+        """Compute MD5 hash of a file."""
+        import hashlib
+        return hashlib.md5(path.read_bytes()).hexdigest()
+
     def _copy_missing_templates(self, src_dir: Path, dest_dir: Path, label: str, overwrite: bool = False):
         """Copy templates from src to dest.
 
-        When overwrite=True, compares file content and only overwrites if different.
+        When overwrite=True, uses factory hash tracking to distinguish between
+        factory updates and user modifications:
+        - New files: always copy
+        - Factory changed, user didn't modify: update to latest factory version
+        - Factory changed, user also modified: skip (preserve user changes)
+        - Factory unchanged: skip
+
         When overwrite=False, only copies files that don't exist yet.
         """
         if not src_dir.exists():
             return 0
 
+        factory_hashes = self._load_factory_hashes() if overwrite else {}
+        hashes_changed = False
+
         copied_files = []
         updated_files = []
-        
-        # Use rglob to recursively traverse all files (fixes multi-level directory skipped update issue)
+        skipped_files = []
+
         for src_file in src_dir.rglob('*'):
             if not src_file.is_file():
                 continue
-                
-            # Calculate relative path to get destination file path
+
             rel_path = src_file.relative_to(src_dir)
             dest_file = dest_dir / rel_path
-            
-            is_new = False
-            is_updated = False
+            hash_key = f"{label}/{rel_path}"
 
             if not dest_file.exists():
-                is_new = True
-                copied_files.append(str(rel_path))
-            elif overwrite:
-                # File exists and overwrite is allowed, compare byte content directly
-                # Optimization 1: Compare file sizes first (fast path for different files)
-                src_stat = src_file.stat()
-                dest_stat = dest_file.stat()
-                
-                if src_stat.st_size != dest_stat.st_size:
-                    is_updated = True
-                    updated_files.append(str(rel_path))
-                else:
-                    # Sizes are identical, read into memory to confirm exact match
-                    src_bytes = src_file.read_bytes()
-                    dest_bytes = dest_file.read_bytes()
-                    
-                    if src_bytes != dest_bytes:
-                        is_updated = True
-                        updated_files.append(str(rel_path))
-            
-            # Trigger disk write only when actual changes occur
-            if is_new or is_updated:
+                # New file: always copy
                 dest_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_file, dest_file)
-                    
+                copied_files.append(str(rel_path))
+                if overwrite:
+                    factory_hashes[hash_key] = self._file_hash(src_file)
+                    hashes_changed = True
+            elif overwrite:
+                src_hash = self._file_hash(src_file)
+                stored_hash = factory_hashes.get(hash_key)
+
+                if stored_hash == src_hash:
+                    # Factory hasn't changed since last sync, skip
+                    continue
+
+                # Factory has changed. Check if user modified the file.
+                dest_hash = self._file_hash(dest_file)
+                if stored_hash is not None and dest_hash != stored_hash:
+                    # User has modified the file since last sync, skip
+                    skipped_files.append(str(rel_path))
+                else:
+                    # User hasn't modified (dest matches last synced factory),
+                    # or first sync (no stored hash). Safe to update.
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dest_file)
+                    updated_files.append(str(rel_path))
+
+                factory_hashes[hash_key] = src_hash
+                hashes_changed = True
+
+        if hashes_changed:
+            self._save_factory_hashes(factory_hashes)
+
         total_changes = len(copied_files) + len(updated_files)
-        
+
         if total_changes > 0:
             msg_parts = [f"Synced {total_changes} {label} from factory"]
-            
             if copied_files:
                 msg_parts.append(f"{len(copied_files)} new: {', '.join(copied_files)}")
-                
             if updated_files:
-                msg_parts.append(f"{len(updated_files)} overwritten: {', '.join(updated_files)}")
-                
+                msg_parts.append(f"{len(updated_files)} updated: {', '.join(updated_files)}")
             logger.info(" | ".join(msg_parts))
-            
-        return total_changes
+        if skipped_files:
+            logger.debug(f"Skipped {len(skipped_files)} user-modified {label}: {', '.join(skipped_files)}")
 
+        return total_changes
 
     def _ensure_default_templates(self):
         """Copy all default templates (agents, teams, prompts, skills).

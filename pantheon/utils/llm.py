@@ -457,6 +457,11 @@ async def acompletion_litellm(
         if api_key:
             kwargs["api_key"] = api_key
 
+    # Kimi Coding API gates access by User-Agent header
+    if "kimi-for-coding" in model:
+        kwargs.setdefault("extra_headers", {})
+        kwargs["extra_headers"].setdefault("User-Agent", "claude-code/0.1.0")
+
     # ========== Execute Call ==========
     try:
         logger.debug(

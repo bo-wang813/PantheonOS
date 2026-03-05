@@ -138,9 +138,13 @@ def get_base_url(provider: ProviderType) -> Optional[str]:
 def get_api_key_for_provider(provider: ProviderType) -> Optional[str]:
     """Get API key from environment variables or settings.
 
-    Priority:
+    Priority (when LLM_API_BASE is set, i.e. unified proxy mode):
+    1. ``LLM_API_KEY`` — user explicitly routes all traffic to a proxy
+    2. Provider-specific fallback: ``{PROVIDER}_API_KEY``
+
+    Priority (normal mode, no LLM_API_BASE):
     1. Provider-specific: ``{PROVIDER}_API_KEY`` (e.g. OPENAI_API_KEY)
-    2. Universal fallback: ``LLM_API_KEY`` (covers all providers)
+    2. Universal fallback: ``LLM_API_KEY``
 
     Args:
         provider: Provider type
@@ -152,13 +156,19 @@ def get_api_key_for_provider(provider: ProviderType) -> Optional[str]:
 
     settings = get_settings()
 
-    # 1. Provider-specific key
+    # When LLM_API_BASE is set, LLM_API_KEY takes priority (unified proxy mode)
+    if settings.get_api_key("LLM_API_BASE"):
+        llm_key = settings.get_api_key("LLM_API_KEY")
+        if llm_key:
+            return llm_key
+
+    # Provider-specific key
     env_var = f"{provider.value.upper()}_API_KEY"
     value = settings.get_api_key(env_var)
     if value:
         return value
 
-    # 2. Universal fallback
+    # Universal fallback
     return settings.get_api_key("LLM_API_KEY")
 
 
