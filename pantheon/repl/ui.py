@@ -420,11 +420,12 @@ class ReplUI:
         self.console.print(table)
 
     async def print_greeting(self):
+        from pantheon import __version__
         self.console.print("[purple]Aristotle © 2025-2026[/purple]")
         print_banner(self.console)
         self.console.print()
         self.console.print(
-            "[bold italic]Multi-agent system for scientific research[/bold italic]"
+            f"[bold italic]Multi-agent system for scientific research[/bold italic]  [dim]v{__version__}[/dim]"
         )
         self.console.print(
             "[bold italic dim]Pantheon is a research project, use with caution.[/bold italic dim]"

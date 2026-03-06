@@ -458,6 +458,11 @@ def _apply_injections(message: dict, injections: list[dict]) -> None:
 
 
 
+def think(thought: str) -> str:
+    """Use this tool to think step-by-step before acting. It records your reasoning without taking any action or obtaining new information. Use it to analyze tool outputs, plan multi-step approaches, verify compliance with instructions, or reconsider your strategy."""
+    return "Thought recorded."
+
+
 class Agent:
     """
     The Agent class is the core component of Pantheon,
@@ -484,6 +489,7 @@ class Agent:
         force_litellm: Whether to force using LiteLLM. (default: False)
         max_tool_content_length: The maximum length of the tool content. (default: 100000)
         description: The description of the agent. (default: None)
+        think_tool: Whether to enable the think tool for structured reasoning. (default: False)
     """
 
     def __init__(
@@ -501,6 +507,7 @@ class Agent:
         force_litellm: bool = False,
         max_tool_content_length: int | None = None,
         description: str | None = None,
+        think_tool: bool = False,
     ):
         self.id = uuid4()
         self.name = name
@@ -532,6 +539,10 @@ class Agent:
         if tools:
             for func in tools:
                 self.tool(func)
+
+        if think_tool:
+            self.tool(think, key="think")
+
         self.response_format = response_format
         self.use_memory = use_memory
         self.memory = memory or Memory(str(uuid4()))

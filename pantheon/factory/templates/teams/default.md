@@ -14,6 +14,7 @@ leader:
   id: leader
   name: Leader
   icon: 🧭
+  think_tool: true
   toolsets:
     - file_manager
     - shell
@@ -26,6 +27,8 @@ leader:
 ---
 
 {{agentic_general}}
+
+{{think_tool}}
 
 ## When to Delegate
 
