@@ -1,6 +1,7 @@
 """REPL - Command line interface for Pantheon agents, based on ChatRoom."""
 
 import asyncio
+import re
 import sys
 import time
 import signal
@@ -318,16 +319,31 @@ class Repl(ReplUI):
                      # Let's handle commands same as before.
                      pass 
 
+                # Show brief notification for bg task completions
+                bg_match = re.match(
+                    r"\[Background task '([^']+)' \(([^)]+)\) (\w+)\.",
+                    current_message,
+                )
+                if bg_match:
+                    task_id, tool_name, status = bg_match.groups()
+                    # Strip agent prefix from tool name
+                    short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+                    color = {"completed": "green", "failed": "red", "cancelled": "yellow"}.get(status, "blue")
+                    self.console.print(
+                        f"\n  [{color}]⬤[/{color}] Background task [bold]{short_name}[/bold] "
+                        f"[{color}]{status}[/{color}] [dim]({task_id})[/dim]"
+                    )
+
                 # Process message
                 if self.prompt_app:
                     self.prompt_app.start_processing(self._estimate_tokens(current_message))
-                    
+
                     # ✅ P3.1: Start status update loop
                     if not self._is_processing:
                         self._is_processing = True
                         self._last_status_update = time.time()
                         self._status_update_task = asyncio.create_task(self._status_update_loop())
-                    
+
                     # Yield to event loop to let prompt_toolkit render first frame
                     await asyncio.sleep(0)
 
