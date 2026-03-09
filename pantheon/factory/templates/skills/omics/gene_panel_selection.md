@@ -2,18 +2,18 @@
 id: gene_panel_selection
 name: Gene Panel Selection Workflow
 description: |
-  End-to-end workflow for gene panel design in scRNA-seq and spatial transcriptomics:
+  End-to-end workflow for gene panel design in scRNA-seq and spatial transcriptomics, that should be **STRICTLY** followed:
   dataset understanding + smart downsampling + train/test splits,
   algorithmic selection (HVG/DE/RF/scGeneFit/SpaPROS),
-  optimal sub-panel discovery (ARI vs size), consensus scoring,
-  biological completion with a stability gate (Completion Rule),
+  optimal sub-panel discovery (ARI vs size),
+  biological completion with a stability gate (Completion Rule), consensus scoring and completion (only if there is still room),
   and benchmarking on test splits (ARI/NMI/Silhouette + UMAP similarity).
 tags: [gene-panel, selection, scrna-seq, spatial, scanpy, scverse, benchmarking, spapros, scgenefit, random-forest]
 ---
 
 # Gene Panel Selection Workflow
 
-This skill is used when you need to construct **biologically meaningful** and **algorithmically robust** gene panels.
+This skill is used when you need to construct **biologically meaningful** and **algorithmically robust** gene panels. You will receive context from the `leader`agent , use this context and **STRICLTY** follow this **Gene Panel Selection Workflow** 
 
 ## Workflow Enforcement (MANDATORY)
 
@@ -40,6 +40,8 @@ You can call other agents by using the `call_agent(agent_name, instruction)` fun
 - **Call the `biologist` agent** for results interpretation:
   When you plot figures, compute a panel, or have intermediate results, call `biologist` to ask for interpretations and include them in your report.
 
+- **Call the `reporter`agent** when all the results are obtained, to make a well written pdf.
+
 ## Visual understanding
 Use the `observe_images` function in the `file_manager` toolset to examine images and figures.
 If a figure is not publication-quality, replot it.
@@ -62,6 +64,24 @@ If the dataset is large, perform **smart downsampling** while preserving **all c
 ---
 
 # Workflow (IMPORTANT : STRICLY FOLLOW NEEDED STEPS)
+
+## 0. Dataset
+If the user did not provide an AnnData object, retrieve and download relevant
+single-cell or spatial omics datasets and to the context provided by the user from well-established public databases such as:
+
+- Gene Expression Omnibus (GEO)
+- ArrayExpress
+- Human Cell Atlas (HCA)
+- Single Cell Expression Atlas
+- CELLxGENE Discover
+- Tabula Sapiens
+- Broad Institute Single Cell Portal
+
+Prefer datasets that already provide processed count matrices
+(e.g., h5ad, loom, mtx format) and associated metadata.
+Convert the dataset into an AnnData object if needed.
+
+**Else use the provided dataset of the user** 
 
 ## 1) Dataset Understanding and Splitting
 
@@ -128,64 +148,70 @@ Recompute only if missing or invalid.
 
 ---
 
-## 2) Algorithmic Gene Panel Selection (SEED STEP)
+## 2) Algorithmic Gene Panel Selection 
 
 ### 2.1 Pre-established methods
 Algorithmic Methods = `{HVG, DE, Random Forest, scGeneFit, SpaPROS}`
 
 - Use true cell type as `label_key` whenever available
-- Implement HVG / DE via Scanpy
-- Use GenePanelToolSet:
-  - `select_scgenefit` (**Always use: max_constraints ≤ 1000**)
-  - `select_spapros` (**Always use n_hvg lower than 3000**)
-  - `select_random_forest`
+- Implement HVG / DE via Scanpy on code
+- for more advaced methods **always Use** `gene_panel_selection_tool` toolset :
+```python
+from pantheon.toolsets.gene_panel_selection_tool import GenePanelToolSet
+
+selection_tool = GenePanelToolSet(
+    name="gene_panel_selection",
+    default_adata_path="adapath",
+    default_workdir="workdir",
+)
+
+# Advanced methods (tool calls)
+# - select_scgenefit   (ALWAYS: max_constraints <= 1000)
+# - select_spapros     (ALWAYS: n_hvg < 3000)
+# - select_random_forest
+#
+# Example calls (adjust args as needed):
+await selection_tool.select_scgenefit(label_key="cell_type", n_top_genes="200", max_constraints="1000")
+await selection_tool.select_spapros(label_key="cell_type", num_markers="200", n_hvg="2500")
+await selection_tool.select_random_forest(label_key="cell_type", n_top_genes="1000")
+  ```
+
 - Always request **gene scores**
 - Save each method score table to disk (CSV)
 
 ---
 
-## 3) Optimal Sub-panel Discovery (Algorithmic)
+## 3) Optimal SEED panel Discovery 
 
-For **each method independently**:
+For **each method independently (HVG, DE, Scgenefit, RF, SpapROS)**:
 
-1. Rank genes by the method-specific **score CSV**
-2. Create sub-panels `{100, 200, …, N}` by taking top-K genes
-3. For each size:
-   - Recompute Leiden clustering (over-clustering allowed)
-   - Compute **ARI** between Leiden clustering and **true cell types**
-4. Plot **ARI vs panel size**
-5. Identify:
-   - stable ARI plateau
-   - consistently high performance
+Let N be the target final panel size requested by the leader 
 
-➡️ Best-performing method + size defines the **initial sub-panel (< N genes)**
+1. Load the method-specific gene score CSV and rank genes (descending score).
+2. Build candidate sub-panels of sizes K ∈ {100, 200, …, N} by taking the top-K ranked genes.
+3. For each method and each K:
+   - Subset the dataset to panel genes only: adata_K = adata[:, panel_genes]
+   - Recompute neighbors + Leiden on adata_K (same preprocessing policy across K)
+   - Compute ARI between Leiden clusters and true cell types (label_key).
+4. Plot ARI vs K for each method.
+5. Pick the **seed panel** = (method, K*) with the best ARI
 
-**Note**: **SEED STEP** is performed using the training `adata`.
-
----
-
-## 4) Consensus Scoring & Curation Logic (EXPLICIT)
-
-### 4.1 Score normalization & consensus table
-After all methods run:
-
-1. **Normalize scores per method** so scoring is on the same scale (no method dominates)
-2. Aggregate normalized scores into a **consensus table**
-3. Rank all genes by **algorithmic consensus score**
-
-Deliverable: a gene × {method score, normalized score, consensus score} table.
+**Note**: **SEED STEP** is performed using the training `adata`. It is **IMPORTANT** you investigate ARI vs panel size for all methods (HVG, DE, Scgenefit, RF, SpapROS) when possible, to make sure you take the best one! 
 
 ---
 
-### 4.2 Curation pipeline (STRICT ORDER)
+## 4) Curation Logic 
+
+
+### 4.1 Curation pipeline (STRICT ORDER)
 
 Final panel is built in **two phases**:
 
-#### Phase 1 — Sub-panel (algorithmic)
-- Use the optimal sub-panel identified in Step 3 as seed subpanel
+#### Phase 1 — Seed-panel (algorithmic)
+- Use the optimal Seed-panel identified in Step 3 as seed subpanel
 - Do **not** change genes in the seed
 
-#### Phase 2 — Completion (biological, consensus-driven)
+#### Phase 2 — Completion (biological first, consensus-driven second)
 Iterate until panel size = **N**.
 
 0) **IMPORTANT: Completion Rule**
@@ -208,14 +234,24 @@ Check this on the training dataset.
    - Literature
 
 2) If biologically relevant:
-   - add gene until size **N**
+   - add gene 
    - ensure no redundancy
    - maintain balanced biological coverage
    - categorize every added gene into relevant biological categories (leader context, or inferred from dataset)
    - enforce the **Completion Rule** (no major drop in ARI / stability)
 
-3) If still room:
-   - fill remaining space with genes from the consensus table (by score priority), excluding genes already present
+3) If you think you adding **all most important biological genes** and there is still room (**size of {seed panel + biologically curated genes from biological lookup} < N**):
+   - fill remaining space with genes from the consensus table (see below) (by score priority), excluding genes already present
+   Consensus Scoring &
+    #### 3.0 Score normalization & consensus table
+    Using the score result from all algoritmic methods run:
+
+    1. **Normalize scores per method** so scoring is on the same scale (no method dominates)
+    2. Aggregate normalized scores into a **consensus table**
+    3. Rank all genes by **algorithmic consensus score**
+
+    **Deliverable: a gene × {method score, normalized score, consensus score} table.**
+    use this table to perform 3) (see above)
 
 **Note**: Every accepted gene must be **justified**, assigned a **biological category**, and referenced with a source (seed/method score or website/literature) and a gene function if available.
 
@@ -263,7 +299,7 @@ Compare vs reference:
 
 ## 6) Summarizing
 
-Report must include the full workflow (Steps 1 → 5) and at minimum:
+Report must include the full workflow (Steps 0 → 5) and at minimum, in a very well written **pdf** (ask `reporter` to make the pdf):
 
 - **Objective & context**
 - **Dataset description** (structure, labels, preprocessing status)
@@ -294,6 +330,12 @@ Report must include the full workflow (Steps 1 → 5) and at minimum:
 
 2) Per-category count recap table based on leader context.
 
+### Figures (MANDATORY)
+The report should contain at **least** all of the following figures , and any other figures that you consider relevant:
+  - ARI vs size curves per method (See above **Sub-panel selection**)
+  - UpSet plot comparing algorithmic panels and curated panel (See above **Benchmarking results**)
+  - ARI/NMI/SI boxplots across test subsets (See above **Benchmarking results**)
+  - UMAP comparisons + quantitative similarity metric (See above **Benchmarking results**)
 ---
 
 # Guidelines for integrated notebook usage

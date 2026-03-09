@@ -25,6 +25,7 @@ with sub-panel discovery (ARI vs size), consensus scoring, biological completion
 **When to use**:
 - You need to design a gene panel 
 - You need to benchmark (ARI/NMI/Silhouette + UMAP similarity) already existing panels
+- **IMPORTANT**: When you do gene panel selection you should **STRICLY** respect this workflow 
 
 ### Single-Cell to Spatial Mapping
 
