@@ -27,7 +27,7 @@ on:
         type: boolean
 
 env:
-  DOCKER_IMAGE: pantheon/pantheon-agents
+  DOCKER_IMAGE: nanguage/pantheon-agents
   DOCKERFILE_PATH: docker/Dockerfile
   BUILD_CONTEXT: .
 
