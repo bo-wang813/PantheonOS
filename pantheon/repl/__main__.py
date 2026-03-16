@@ -52,6 +52,7 @@ def start(
     log_level: str = None,
     quiet: bool = None,
     resync: bool = False,
+    i: str = None,
 ):
     """Start Pantheon REPL.
 
@@ -65,6 +66,7 @@ def start(
         log_level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Default: CRITICAL.
         quiet: Disable all logging. Use --quiet to enable. (default: False)
         resync: Force resync templates by deleting skills/agents/teams directories. (default: False)
+        i: Initial input message to send immediately after startup.
     """
     # Load settings for defaults (CLI > Settings > code defaults)
     from pantheon.settings import get_settings
@@ -151,6 +153,7 @@ def start(
             chat_id=chat_id,
             log_level=log_level,
             quiet=quiet,
+            initial_input=i,
         )
     )
 
@@ -188,6 +191,7 @@ async def _start_async(
     chat_id: str = None,
     log_level: str = "CRITICAL",
     quiet: bool = False,
+    initial_input: str = None,
 ):
     """Async implementation of start."""
     from pantheon.settings import get_settings
@@ -326,7 +330,7 @@ async def _start_async(
     # Start background task to update litellm cost map (non-blocking)
     asyncio.create_task(_update_litellm_cost_map())
 
-    await repl.run(disable_logging=disable_logging, log_level=log_level)
+    await repl.run(message=initial_input, disable_logging=disable_logging, log_level=log_level)
 
 
 if __name__ == "__main__":
