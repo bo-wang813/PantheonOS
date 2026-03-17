@@ -109,14 +109,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=sys.platform != 'win32',  # MinGW strip corrupts MSVC-built DLLs on Windows
-    upx=True,
-    upx_exclude=[
-        'python3*.dll',
-        'vcruntime*.dll',
-        'msvcp*.dll',
-        'ucrtbase.dll',
-        'api-ms-win-*.dll',
-    ],
+    upx=False,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -132,13 +125,6 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=sys.platform != 'win32',
-    upx=True,
-    upx_exclude=[
-        'python3*.dll',
-        'vcruntime*.dll',
-        'msvcp*.dll',
-        'ucrtbase.dll',
-        'api-ms-win-*.dll',
-    ],
+    upx=False,
     name='pantheon-backend',
 )
