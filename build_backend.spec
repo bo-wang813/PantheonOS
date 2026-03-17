@@ -3,7 +3,13 @@
 block_cipher = None
 
 from PyInstaller.utils.hooks import copy_metadata, collect_data_files
-import os, sys
+import os, sys, shutil
+
+# nats-server-bin package installs the binary to .venv/bin/ (or Scripts/ on Windows).
+# PyInstaller doesn't bundle it automatically, so we find and include it explicitly.
+_nats_bin = shutil.which('nats-server.exe' if sys.platform == 'win32' else 'nats-server')
+if not _nats_bin:
+    raise FileNotFoundError("nats-server binary not found. Ensure nats-server-bin is installed.")
 
 datas = [
     ('pantheon/factory/templates', 'pantheon/factory/templates'),
@@ -27,7 +33,7 @@ if os.path.exists(_model_init):
 a = Analysis(
     ['pantheon/chatroom/__main__.py'],
     pathex=[],
-    binaries=[],
+    binaries=[(_nats_bin, '.')],  # nats-server binary from nats-server-bin package
     datas=datas,
     hiddenimports=[
         'pantheon',

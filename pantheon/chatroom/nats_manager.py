@@ -15,6 +15,7 @@ import json
 import os
 import socket
 import shutil
+import sys
 import aiohttp
 from pathlib import Path
 from typing import Optional, Tuple
@@ -81,21 +82,22 @@ class NATSManager:
         Returns:
             (available, path_or_error_message): Tuple of availability and path/error
         """
-        # 1. Check .venv/bin/nats-server (project's venv)
-        venv_binary = (
-            Path(__file__).parent.parent.parent / ".venv" / "bin" / "nats-server"
-        )
-        if venv_binary.exists():
-            logger.debug(f"Found nats-server at: {venv_binary}")
-            return (True, str(venv_binary))
+        # 1. PyInstaller bundle: nats-server is in _internal/ via binaries=[] in spec
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            frozen_binary = Path(sys._MEIPASS) / (
+                'nats-server.exe' if sys.platform == 'win32' else 'nats-server'
+            )
+            if frozen_binary.exists():
+                logger.debug(f"Found nats-server in bundle: {frozen_binary}")
+                return (True, str(frozen_binary))
 
-        # 2. Check PATH
+        # 2. Development: find via PATH (covers activated venv, system install, etc.)
         binary = shutil.which("nats-server")
         if binary:
             logger.debug(f"Found nats-server in PATH: {binary}")
             return (True, binary)
 
-        # 3. Return error message with install instructions
+        # 3. Not found
         error_msg = (
             "nats-server binary not found.\n\n"
             "Installation options:\n"
