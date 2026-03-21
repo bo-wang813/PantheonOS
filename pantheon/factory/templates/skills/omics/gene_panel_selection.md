@@ -200,8 +200,7 @@ Let N be the target final panel size requested by the leader
 
 ---
 
-## 4) Curation Logic 
-
+## 4) Curation Logic
 
 ### 4.1 Curation pipeline (STRICT ORDER)
 
@@ -211,49 +210,58 @@ Final panel is built in **two phases**:
 - Use the optimal Seed-panel identified in Step 3 as seed subpanel
 - Do **not** change genes in the seed
 
-#### Phase 2 — Completion (biological first, consensus-driven second)
-Iterate until panel size = **N**.
+#### Phase 2 — Completion (biological lookup is the PRIMARY mechanism)
 
-0) **IMPORTANT: Completion Rule**
-Before adding a set of genes:
+> **CRITICAL**: Biological curation is the MAIN completion mechanism, NOT consensus fill.
+> The purpose of completion is to add biologically meaningful genes that algorithmic methods may have missed.
+> Consensus fill is ONLY a small last-resort gap filler. If you find yourself adding more consensus-fill genes
+> than biological genes, you have NOT done enough biological lookup.
+
+**0) Completion Rule**
+Before adding a batch of genes:
 - test whether it makes ARI drop considerably or become less stable (training)
-- propose a panel that does **not** drop ARI even if its size is < N
-- add a supplemental list to reach N **only if relevant to context**
-
-**Panel size N is a target size. If biological completion degrades performance, propose**:
-- an optimal stable panel (< N)
-- a supplemental gene list to reach N if required  
+- If completing the panel up to size **N** degrades performance substantially (eg ARI drop >5%), propose:
+  - an optimal stable panel (< N)
+  - a supplemental gene list to reach N if required
+- a modest ARI drop is acceptable if it adds important biological coverage
 Check this on the training dataset.
 
-**Note**: Before biological lookup on supplemental genes, first inspect genes in the seed panel to see what biological coverage is already present, then complete.
+**1) Assess Seed Coverage First**
+Before biological lookup, inspect genes in the seed panel:
+- Map seed gene IDs to symbols
+- Identify which biological categories from the leader's context are already covered
+- Note which categories are MISSING or under-represented
 
-1) Perform biological lookup with `browser_use` for genes relevant to the **leader-provided biological context** on:
-   - GeneCards
-   - GO
-   - UniProt
-   - Literature
+**2) Exhaustive Biological Lookup (CRITICAL — MUST BE THOROUGH)**
+Derive the relevant biological categories from the **leader-provided context** (e.g., cell type markers, signaling pathways, functional states, disease-specific genes — whatever the user's goal requires).
 
-2) If biologically relevant:
-   - add gene 
+Call `browser_use` **MULTIPLE times**, once per major biological category identified.
+For **each category**, collect **all** well-established marker genes (typically 10-30+ per category, not just 3-5).
+Sources: GeneCards, GO, UniProt, KEGG, Reactome, MSigDB, published marker gene lists, review articles.
+
+> A single browser_use call returning a handful of genes for an entire panel is INSUFFICIENT.
+> The number of biologically curated genes should scale with the gap between seed size and target N.
+> Do multiple rounds of lookup — breadth across ALL relevant categories AND depth within each.
+
+**3) Add Biologically Relevant Genes**
+For each candidate gene:
+   - check not already in seed panel
    - ensure no redundancy
-   - maintain balanced biological coverage
-   - categorize every added gene into relevant biological categories (leader context, or inferred from dataset)
-   - enforce the **Completion Rule** (no major drop in ARI / stability)
+   - maintain balanced biological coverage across categories
+   - categorize into a relevant biological category (from leader context, or inferred)
+   - after each batch of additions, check Completion Rule (ARI stability on training)
+   - if ARI drops sharply, try a different set; a modest drop for strong biological coverage is acceptable
+   - continue until all important biological genes are added or panel reaches size N
 
-3) If you think you adding **all most important biological genes** and there is still room (**size of {seed panel + biologically curated genes from biological lookup} < N**):
-   - fill remaining space with genes from the consensus table (see below) (by score priority), excluding genes already present
-   Consensus Scoring &
-    #### 3.0 Score normalization & consensus table
-    Using the score result from all algoritmic methods run:
+**4) Consensus Fill (LAST RESORT ONLY — small gap filler)**
+Only if after exhaustive biological lookup, `{seed + biological genes} < N`:
+   - normalize scores per method (same scale, no method dominates)
+   - aggregate into a consensus table
+   - fill the small remaining gap by score priority, excluding genes already present
 
-    1. **Normalize scores per method** so scoring is on the same scale (no method dominates)
-    2. Aggregate normalized scores into a **consensus table**
-    3. Rank all genes by **algorithmic consensus score**
+**Deliverable: a gene × {method where it comes from, biological category, biological function, source/reference} table.**
 
-    **Deliverable: a gene × {method score, normalized score, consensus score} table.**
-    use this table to perform 3) (see above)
-
-**Note**: Every accepted gene must be **justified**, assigned a **biological category**, and referenced with a source (seed/method score or website/literature) and a gene function if available.
+**Note**: Every accepted gene must be **justified**, assigned a **biological category**, and referenced with a source (seed/method score or website/literature) and a gene function description.
 
 ---
 
