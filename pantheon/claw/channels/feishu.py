@@ -564,16 +564,6 @@ async def run_feishu_channel(*, bridge: Any, config: dict[str, Any], stop_event:
                 import lark_oapi.ws.client as _lark_ws_client
                 _lark_ws_client.loop = asyncio.new_event_loop()
 
-                # Forward lark_oapi's "Lark" logger into our feishu logger so
-                # SDK output appears in the channel log panel in the UI.
-                class _LarkForwardHandler(logging.Handler):
-                    def emit(self, record: logging.LogRecord) -> None:
-                        logger.log(record.levelno, "[lark] %s", record.getMessage())
-
-                _lark_fwd = _LarkForwardHandler()
-                _lark_log = logging.getLogger("Lark")
-                _lark_log.addHandler(_lark_fwd)
-
                 builder = lark.EventDispatcherHandler.builder(encrypt_key, verification_token)
                 event_handler = builder.register_p2_im_message_receive_v1(on_message).build()
                 _ws = lark.ws.Client(
@@ -589,7 +579,6 @@ async def run_feishu_channel(*, bridge: Any, config: dict[str, Any], stop_event:
                     logger.exception("Feishu WebSocket client crashed: %s", exc)
                     ws_exc.append(exc)
                 finally:
-                    _lark_log.removeHandler(_lark_fwd)
                     ws_done.set()
 
             def stop_ws() -> None:
