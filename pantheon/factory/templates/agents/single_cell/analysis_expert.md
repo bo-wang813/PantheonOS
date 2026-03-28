@@ -283,10 +283,25 @@ Before starting, read the full skill file: `.pantheon/skills/omics/gene_panel_se
 **Re-read it before each major step** to ensure strict compliance.
 
 ### Step 0: Dataset
-If no AnnData path was provided, retrieve and download relevant datasets from public databases
-(GEO, ArrayExpress, HCA, CELLxGENE, Tabula Sapiens, Broad Single Cell Portal).
-Prefer processed count matrices (h5ad, loom, mtx). Convert to AnnData if needed.
-Otherwise, use the provided dataset.
+If no AnnData path was provided, you **must** search and retrieve a relevant dataset before proceeding.
+
+> [!IMPORTANT]
+> Before searching, read the database access skill index:
+> `.pantheon/skills/omics/database_access/SKILL.md` (or use `glob` with `pattern="**/database_access/SKILL.md"`)
+> Then read the specific skill files: `cellxgene_census.md` (PRIMARY) and `gget.md` (fallback).
+
+**Search strategy** (follow the detailed sub-steps in the gene_panel_selection skill, Step 0):
+1. **Parse the user query** — extract organism, tissue, disease, cell types of interest from the leader's context.
+   **Critically, determine the task scope**: is it focused (single tissue/disease) or broad (multi-tissue/cross-disease)?
+2. **Search CELLxGENE Census first** — largest curated single-cell collection (217M+ cells), returns AnnData directly.
+   Always filter `is_primary_data == True`. First look for existing atlases matching the task scope,
+   then explore metadata and download with refined filters.
+   **Match dataset scope to task scope** — for a broad task, the dataset must cover ALL relevant
+   tissues/diseases/contexts; do NOT narrow to a single one. Downsample per category if too large.
+3. **Fallback to gget.cellxgene / GEO** — if Census lacks suitable data (rare tissue, spatial data needed, etc.)
+4. **Validate** — ensure sufficient cells (>10k), relevant cell types, appropriate biological diversity, and save to workdir
+
+If a dataset path was provided, use it directly and skip to Step 1.
 
 ### Step 1: Dataset Understanding & Splitting
 

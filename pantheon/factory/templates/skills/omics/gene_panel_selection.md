@@ -66,22 +66,153 @@ If the dataset is large, perform **smart downsampling** while preserving **all c
 # Workflow (IMPORTANT : STRICLY FOLLOW NEEDED STEPS)
 
 ## 0. Dataset
-If the user did not provide an AnnData object, retrieve and download relevant
-single-cell or spatial omics datasets and to the context provided by the user from well-established public databases such as:
 
-- Gene Expression Omnibus (GEO)
-- ArrayExpress
-- Human Cell Atlas (HCA)
-- Single Cell Expression Atlas
-- CELLxGENE Discover
-- Tabula Sapiens
-- Broad Institute Single Cell Portal
+**If the user provided an AnnData object / dataset path → skip to Step 1.**
 
-Prefer datasets that already provide processed count matrices
-(e.g., h5ad, loom, mtx format) and associated metadata.
-Convert the dataset into an AnnData object if needed.
+If no dataset was provided, you **must** search and retrieve a relevant dataset
+before proceeding. Follow the sub-steps below **in order**.
 
-**Else use the provided dataset of the user** 
+> [!IMPORTANT]
+> Before starting, read the database access skill index:
+> `.pantheon/skills/omics/database_access/SKILL.md`
+> (or use `glob` with `pattern="**/database_access/SKILL.md"`)
+> and the relevant skill files it references (especially `cellxgene_census.md` and `gget.md`).
+
+### 0.1 Parse the user query
+Extract search parameters from the leader-provided context:
+- **Organism**: e.g., "Homo sapiens", "Mus musculus"
+- **Tissue / organ**: e.g., "lung", "brain", "bone marrow", "tumor"
+- **Disease context**: e.g., "COVID-19", "cancer", "normal"
+- **Cell types of interest**: e.g., "immune cells", "T cells", "neurons"
+- **Assay preference**: e.g., scRNA-seq, spatial transcriptomics
+- **Scope**: Is this a **focused** task (single tissue/disease/system) or a **broad** task
+  (multi-tissue, pan-disease, cross-system)? This is critical for dataset selection.
+
+> [!CRITICAL]
+> **Match dataset scope to task scope.** The dataset(s) you retrieve must be
+> representative of the **full biological diversity** the panel is designed for.
+> - **Focused task** (e.g., "brain cortex panel", "kidney disease panel") →
+>   fetch data from that specific tissue/disease/system
+> - **Broad / cross-tissue task** (e.g., "pan-cancer panel", "whole-body immune panel",
+>   "multi-organ developmental panel") → you **must** include data from **all relevant
+>   tissues, diseases, or biological contexts** so the panel captures both shared and
+>   context-specific biology. **Do NOT narrow down to a single tissue or disease.**
+> - In general: the biological diversity in the retrieved dataset should reflect the
+>   biological diversity that the final gene panel must resolve. If the panel needs
+>   to distinguish 10 tissues, the dataset must contain cells from those 10 tissues.
+
+### 0.2 Search CELLxGENE Census (PRIMARY source)
+CELLxGENE Census is the largest curated single-cell collection (217M+ cells)
+and returns AnnData objects directly — **always try this first**.
+
+Read the full skill: `.pantheon/skills/omics/database_access/cellxgene_census.md`
+
+Strategy:
+
+**A) First, look for existing atlases / large integrated datasets** that already match
+the task scope. CELLxGENE hosts many curated cross-tissue and disease-specific atlases
+(e.g., Tabula Sapiens, Human Cell Atlas collections, organ-specific atlases,
+disease-focused atlases). A single well-curated atlas is far better than stitching
+together cells from separate studies (avoids batch effects, inconsistent annotations, etc.).
+
+```python
+import cellxgene_census
+with cellxgene_census.open_soma() as census:
+    # List all datasets and inspect their descriptions
+    datasets = census["census_info"]["datasets"].read().concat().to_pandas()
+    # Browse dataset titles/collections to find relevant atlases
+    print(datasets[["dataset_id", "collection_name", "dataset_title"]].head(30))
+    # Score datasets by their biological diversity
+    obs_df = cellxgene_census.get_obs(
+        census, "<organism>",
+        value_filter="is_primary_data == True",
+        column_names=["dataset_id", "tissue_general", "disease", "cell_type"],
+    )
+    diversity = obs_df.groupby("dataset_id").agg(
+        n_cells=("cell_type", "size"),
+        n_tissues=("tissue_general", "nunique"),
+        n_diseases=("disease", "nunique"),
+        n_cell_types=("cell_type", "nunique"),
+    ).sort_values("n_tissues", ascending=False)
+    print(diversity.head(20))
+```
+
+Pick the dataset that best matches the task scope. For broad tasks, prioritize datasets
+with highest tissue/disease/cell-type diversity. For focused tasks, prioritize relevance
+to the specific tissue/disease. Prefer datasets with >50k cells and existing cell type annotations.
+
+**B) If no single atlas suffices**, build a composite query across multiple tissues/diseases:
+
+1. **Explore available data** — query cell metadata to estimate dataset sizes:
+   ```python
+   with cellxgene_census.open_soma() as census:
+       obs_df = cellxgene_census.get_obs(
+           census, "<organism>",
+           value_filter="tissue_general == '<tissue>' and is_primary_data == True",
+           column_names=["cell_type", "tissue", "tissue_general", "disease", "assay", "dataset_id"],
+       )
+       print(f"Total cells: {len(obs_df)}")
+       print(obs_df["cell_type"].value_counts().head(20))
+       print(obs_df["disease"].value_counts().head(10))
+       print(obs_df["tissue_general"].value_counts().head(15))
+   ```
+2. **Refine filters — but preserve the task scope**:
+   - For **broad tasks**: keep multiple tissues/diseases/contexts in the filter.
+     Sample a **balanced** number of cells per category to avoid one dominating.
+   - For **focused tasks**: narrow to the specific tissue/disease/context.
+   - Always check the diversity of cell types, tissues, and diseases after filtering
+     to confirm the dataset matches the task scope.
+
+3. **Download the dataset** as AnnData:
+   ```python
+   with cellxgene_census.open_soma() as census:
+       adata = cellxgene_census.get_anndata(
+           census,
+           organism="<organism>",
+           obs_value_filter="<refined_filter> and is_primary_data == True",
+           column_names={
+               "obs": ["cell_type", "tissue", "tissue_general", "disease", "sex",
+                        "assay", "donor_id", "dataset_id", "development_stage"],
+           },
+       )
+   ```
+4. **Always filter `is_primary_data == True`** to avoid duplicate cells
+5. If the dataset is very large (>500k cells), **downsample per category** rather than
+   dropping entire tissues/diseases. For example, sample up to N cells per
+   (tissue, disease) combination to keep diversity while controlling size.
+   Alternatively, use the streaming API (`ExperimentAxisQuery`) — see the skill file.
+
+### 0.3 Alternative sources (if Census is insufficient)
+If CELLxGENE Census does not have suitable data (e.g., rare tissue, specific organism,
+spatial data needed), try these alternatives **in order of preference**:
+
+1. **gget.cellxgene** — query CZ CELLxGENE Discover for specific datasets:
+   Read: `.pantheon/skills/omics/database_access/gget.md`
+   ```python
+   import gget
+   gget.setup("cellxgene")
+   adata = gget.cellxgene(species="homo_sapiens", tissue="<tissue>",
+                           cell_type=["<cell_type1>", "<cell_type2>"])
+   ```
+2. **GEO / ArrayExpress** — call `browser_use` to search for accession numbers,
+   then download via `gget` or direct URL
+3. **Human Cell Atlas (HCA)** / **Tabula Sapiens** / **Broad Single Cell Portal**
+   — call `browser_use` for specific dataset URLs
+
+Prefer datasets that already provide **processed count matrices**
+(h5ad, loom, mtx format) with cell type annotations and metadata.
+
+### 0.4 Validate the retrieved dataset
+Before proceeding to Step 1, verify:
+- [ ] Dataset is loaded as an AnnData object
+- [ ] Sufficient number of cells (ideally >10k for robust panel selection)
+- [ ] Cell type annotations exist (check `.obs` columns) — if not, they will be computed in Step 1
+- [ ] The dataset is relevant to the user's biological context
+- [ ] Save the dataset to workdir via `file_manager`
+
+> [!NOTE]
+> Document in the notebook which database was queried, what filters were used,
+> and why this dataset was selected. This information goes into the final report (Step 6).
 
 ## 1) Dataset Understanding and Splitting
 

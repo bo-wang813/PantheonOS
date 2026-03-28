@@ -124,9 +124,18 @@ The `analysis_expert` knows **independently** how to:
 ### Gene Panel Selection Workflow
 
 #### 0. Dataset
-If the user did not provide an AnnData object, ask `analysis_expert` to retrieve and download relevant
-datasets from public databases (GEO, ArrayExpress, HCA, CELLxGENE, Tabula Sapiens, Broad Single Cell Portal).
-Prefer processed count matrices. Otherwise, use the provided dataset.
+If the user did **not** provide an AnnData object or dataset path, instruct `analysis_expert` to
+**search and retrieve** a relevant dataset from public databases before proceeding.
+
+When delegating, remind `analysis_expert` to:
+- Read the database access skills: `.pantheon/skills/omics/database_access/SKILL.md`
+  (especially `cellxgene_census.md` as primary source and `gget.md` as fallback)
+- Follow the detailed dataset search workflow in Step 0 of `gene_panel_selection.md`
+- Extract search parameters (organism, tissue, disease, cell types) from the user's biological context
+- Search **CELLxGENE Census first** (largest curated collection, returns AnnData directly)
+- Validate the dataset before proceeding (sufficient cells, relevant annotations)
+
+If the user provided a dataset path, pass it directly to `analysis_expert` and skip dataset retrieval.
 
 #### 1. Understanding
 
