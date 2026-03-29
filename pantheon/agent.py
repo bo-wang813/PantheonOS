@@ -583,8 +583,7 @@ class Agent:
 
         _BG_BLOCKED_TOOLS = {
             "run_in_background",
-            "get_background_task",
-            "cancel_background_task",
+            "background_task",
         }
 
         async def run_in_background(
@@ -598,7 +597,7 @@ class Agent:
             sub-agent calls, data processing). The task runs asynchronously and
             you will be automatically notified when it completes.
 
-            You can check progress anytime with get_background_task(task_id).
+            You can check progress anytime with background_task(task_id=...).
             Example: run_in_background("run_command", '{"command": "python train.py"}')
 
             Args:
@@ -635,57 +634,68 @@ class Agent:
                 "tool_name": tool_name,
             }
 
-        async def get_background_task(task_id: str = "") -> dict:
-            """Check status and output of background tasks.
-
-            Returns incremental stdout output, status, and result.
-            If task_id is provided, get details for that task.
-            If omitted, list all background tasks.
+        async def background_task(
+            action: str = "list",
+            task_id: str = "",
+        ) -> dict:
+            """Manage and monitor background tasks.
 
             Args:
-                task_id: ID of a specific task (e.g. 'bg_1'), or empty to list all.
+                action: Operation to perform:
+                    - "list": List all background tasks (default when no task_id)
+                    - "status": Get status, progress and result of a specific task (requires task_id)
+                    - "cancel": Cancel a running task (requires task_id)
+                    - "remove": Remove a task from the list, cancels if still running (requires task_id)
+                task_id: ID of the task (e.g. 'bg_1'). Required for status/cancel/remove.
+
+            Returns:
+                dict with task details or task list
+
+            Examples:
+                background_task()  # List all tasks
+                background_task(action="status", task_id="bg_1")  # Check progress
+                background_task(action="cancel", task_id="bg_1")  # Cancel task
+                background_task(action="remove", task_id="bg_1")  # Remove task
             """
-            if task_id:
-                task = bg_manager.get(task_id)
-                if task is None:
-                    return {"error": f"Task '{task_id}' not found."}
-                return bg_manager.to_summary(task)
-            else:
+            if action == "list":
                 return {
                     "tasks": [
                         bg_manager.to_summary(t) for t in bg_manager.list_tasks()
                     ]
                 }
 
-        async def cancel_background_task(task_id: str) -> dict:
-            """Cancel a running background task.
+            if action == "status":
+                if not task_id:
+                    return {"error": "task_id is required for status action"}
+                task = bg_manager.get(task_id)
+                if task is None:
+                    return {"error": f"Task '{task_id}' not found."}
+                return bg_manager.to_summary(task)
 
-            Args:
-                task_id: ID of the task to cancel (e.g. 'bg_1').
-            """
-            if bg_manager.cancel(task_id):
-                return {"task_id": task_id, "status": "cancelling"}
-            task = bg_manager.get(task_id)
-            if task is None:
+            elif action == "cancel":
+                if not task_id:
+                    return {"error": "task_id is required for cancel action"}
+                if bg_manager.cancel(task_id):
+                    return {"task_id": task_id, "status": "cancelling"}
+                task = bg_manager.get(task_id)
+                if task is None:
+                    return {"error": f"Task '{task_id}' not found."}
+                return {"error": f"Task '{task_id}' is already {task.status}."}
+
+            elif action == "remove":
+                if not task_id:
+                    return {"error": "task_id is required for remove action"}
+                if bg_manager.remove(task_id):
+                    return {"task_id": task_id, "status": "removed"}
                 return {"error": f"Task '{task_id}' not found."}
-            return {"error": f"Task '{task_id}' is already {task.status}."}
 
-        async def remove_background_task(task_id: str) -> dict:
-            """Remove a background task from the task list.
-
-            Cancels the task first if it is still running, then deletes it.
-
-            Args:
-                task_id: ID of the task to remove (e.g. 'bg_1').
-            """
-            if bg_manager.remove(task_id):
-                return {"task_id": task_id, "status": "removed"}
-            return {"error": f"Task '{task_id}' not found."}
+            else:
+                return {
+                    "error": f"Unknown action '{action}'. Must be one of: list, status, cancel, remove"
+                }
 
         self._base_functions["run_in_background"] = run_in_background
-        self._base_functions["get_background_task"] = get_background_task
-        self._base_functions["cancel_background_task"] = cancel_background_task
-        self._base_functions["remove_background_task"] = remove_background_task
+        self._base_functions["background_task"] = background_task
 
     def _get_tool_timeout(self) -> int:
         """Get tool timeout with priority: user override > settings."""
@@ -1254,7 +1264,7 @@ class Agent:
                             result = (
                                 f"Tool '{func_name}' exceeded timeout ({timeout}s) and was moved to "
                                 f"background execution. task_id='{bg_task.task_id}'. "
-                                f"Use get_background_task('{bg_task.task_id}') to check progress and results."
+                                f"Use background_task(action='status', task_id='{bg_task.task_id}') to check progress and results."
                             )
                             context_variables[tool_call_id] = result
                             break

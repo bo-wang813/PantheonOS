@@ -153,7 +153,7 @@ PANTHEON_ENV_EOF
             "initial_output": initial_output,
         }
 
-    @tool
+    @tool(exclude=True)
     async def close_shell(self, shell_id: str) -> dict:
         """Close a shell.
 
