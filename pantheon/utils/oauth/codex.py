@@ -376,11 +376,18 @@ class CodexOAuthManager:
             logger.info("[Codex OAuth] Codex CLI auth has no tokens")
             return None
 
-        # If token is expired, refresh it
-        if refresh_token and (not access_token or _token_expired(access_token)):
-            logger.info("[Codex OAuth] Codex CLI token expired, refreshing...")
-            refreshed = _refresh_tokens(refresh_token)
-            tokens = refreshed
+        # Don't refresh here — OpenAI refresh_tokens are single-use.
+        # If Codex CLI already used it, refreshing would fail with "refresh_token_reused".
+        # Just import as-is; get_access_token() will refresh lazily when needed.
+        if not access_token and refresh_token:
+            # No access_token at all — must refresh to get one
+            try:
+                logger.info("[Codex OAuth] No access_token, attempting refresh...")
+                refreshed = _refresh_tokens(refresh_token)
+                tokens = refreshed
+            except CodexOAuthError as e:
+                logger.warning(f"[Codex OAuth] Refresh failed (token may be reused): {e}")
+                # Still import what we have — the token may work or login will be needed
 
         claims = _jwt_org_context(tokens.get("id_token", "") or tokens.get("access_token", ""))
 
