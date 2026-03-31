@@ -60,7 +60,7 @@ def get_test_model() -> str:
     """
     Get LLM model for testing from environment.
 
-    Supports LiteLLM model strings:
+    Supports provider-prefixed model strings:
     - OpenAI: "gpt-4o-mini", "gpt-4o"
     - Anthropic: "anthropic/claude-sonnet-4-20250514", "anthropic/claude-haiku-3-5-20241022"
     - Gemini: "gemini/gemini-1.5-flash"
@@ -648,12 +648,12 @@ LIVE_TEST_CASES_ALL = REAL_QUERY_TEST_CASES
 @pytest.mark.live_llm
 class TestLiveModelSelection:
     """
-    Live LLM tests using real API calls via LiteLLM.
+    Live LLM tests using real API calls via provider adapters.
 
     Supports multiple providers through environment configuration:
 
     Environment Variables:
-    - SCFM_TEST_MODEL: LiteLLM model string (default: "gpt-4o-mini")
+    - SCFM_TEST_MODEL: Model string (default: "gpt-4o-mini")
     - Provider API keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
 
     Example usage:

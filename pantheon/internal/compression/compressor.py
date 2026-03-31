@@ -336,7 +336,7 @@ class ContextCompressor:
         return sum(1 for msg in messages if msg.get("role") == "compression")
 
     def _estimate_tokens(self, messages: list[dict]) -> int:
-        """Estimate token count for messages using litellm/tiktoken when available."""
+        """Estimate token count for messages using tiktoken when available."""
         from pantheon.utils.llm import _safe_token_counter
         return max(1, _safe_token_counter(model=self.model, messages=messages))
 

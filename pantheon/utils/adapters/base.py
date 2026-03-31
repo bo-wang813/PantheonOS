@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Callable
 
 
 # ============ Unified Exception Types ============
-# These replace litellm.exceptions.* and are caught in agent.py _is_retryable_error()
+# Unified exception types caught in agent.py _is_retryable_error()
 
 
 class LLMError(Exception):

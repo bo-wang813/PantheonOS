@@ -150,11 +150,9 @@ def _strip_docstring_args(docstring: str | None) -> str:
 def desc_to_openai_dict(
     desc: Description,
     skip_params: List[str] = [],
-    litellm_mode: bool = False,
     relaxed_schema: bool = False,
 ) -> dict:
-    # Support both old and new parameter names
-    _relaxed = relaxed_schema or litellm_mode
+    _relaxed = relaxed_schema
 
     # Filter inputs without modifying original desc.inputs
     filtered_inputs = [arg for arg in desc.inputs if arg.name not in skip_params]

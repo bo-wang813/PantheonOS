@@ -24,11 +24,11 @@ class ProviderType(Enum):
     """Supported LLM providers.
 
     OPENAI: Direct OpenAI or OpenAI-compatible providers
-    LITELLM: Non-OpenAI providers (anthropic, gemini, etc.) — legacy name kept for compat
+    NATIVE: Non-OpenAI providers using native SDKs (anthropic, gemini, etc.)
     """
 
     OPENAI = "openai"
-    LITELLM = "litellm"  # Kept for backward compat; means "non-openai provider"
+    NATIVE = "native"
 
 
 @dataclass
@@ -39,7 +39,7 @@ class ProviderConfig:
     model_name: str
     base_url: Optional[str] = None
     api_key: Optional[str] = None
-    force_litellm: bool = False  # Kept for backward compat
+    relaxed_schema: bool = False
 
 
 # OpenAI-compatible providers that need custom base_url.
@@ -50,18 +50,18 @@ OPENAI_COMPATIBLE_PROVIDERS: dict[str, tuple[str, str]] = {}
 # ============ Provider Detection ============
 
 
-def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
+def detect_provider(model: str, relaxed_schema: bool) -> ProviderConfig:
     """Detect provider from model string.
 
     Model format:
-    - "gpt-4" → OpenAI (via LiteLLM)
-    - "provider/model" → LiteLLM (handles zhipu, anthropic, etc. natively)
+    - "gpt-4" → OpenAI provider
+    - "provider/model" → Native SDK (handles anthropic, gemini, etc.)
     - "custom_anthropic/model" → OpenAI-compatible with CUSTOM_ANTHROPIC_* env vars
     - "custom_openai/model" → OpenAI-compatible with CUSTOM_OPENAI_* env vars
 
     Args:
         model: Model identifier string
-        force_litellm: Force using LiteLLM backend
+        relaxed_schema: Use relaxed (non-strict) tool schema mode
 
     Returns:
         ProviderConfig with detected provider and model name
@@ -82,21 +82,21 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
             base_url = os.environ.get(config.api_base_env, "")
             api_key = os.environ.get(config.api_key_env, "")
 
-            # Determine the litellm model format based on endpoint type
-            # LiteLLM needs a provider prefix to route correctly.
+            # Determine the resolved model format based on endpoint type.
+            # A provider prefix is needed to route correctly.
             # Explicitly passed api_key in call_llm_provider overrides env vars.
             if "anthropic" in provider_lower:
-                litellm_model = f"anthropic/{model_name}"
+                resolved_model = f"anthropic/{model_name}"
             else:
-                litellm_model = f"openai/{model_name}"
+                resolved_model = f"openai/{model_name}"
 
-            logger.debug(f"Using custom endpoint '{provider_lower}' with base_url={base_url}, litellm_model={litellm_model}")
+            logger.debug(f"Using custom endpoint '{provider_lower}' with base_url={base_url}, resolved_model={resolved_model}")
             return ProviderConfig(
                 provider_type=ProviderType.OPENAI,
-                model_name=litellm_model,
+                model_name=resolved_model,
                 base_url=base_url or None,
                 api_key=api_key or None,
-                force_litellm=force_litellm,
+                relaxed_schema=relaxed_schema,
             )
 
     if "/" in model:
@@ -113,23 +113,23 @@ def detect_provider(model: str, force_litellm: bool) -> ProviderConfig:
         elif provider_lower == "openai":
             provider_type = ProviderType.OPENAI
         else:
-            # All other prefixed models go through LiteLLM (zhipu, anthropic, etc.)
-            provider_type = ProviderType.LITELLM
-            model_name = model  # Keep full model string for LiteLLM
+            # All other prefixed models use native SDK adapters (anthropic, gemini, etc.)
+            provider_type = ProviderType.NATIVE
+            model_name = model  # Keep full model string for native adapter
     else:
         provider_type = ProviderType.OPENAI
         model_name = model
 
-    # Override with LiteLLM if forced
-    if force_litellm and provider_type != ProviderType.LITELLM:
-        provider_type = ProviderType.LITELLM
+    # Override with NATIVE if relaxed_schema is forced
+    if relaxed_schema and provider_type != ProviderType.NATIVE:
+        provider_type = ProviderType.NATIVE
 
     return ProviderConfig(
         provider_type=provider_type,
         model_name=model_name,
         base_url=base_url,
         api_key=api_key or None,
-        force_litellm=force_litellm,
+        relaxed_schema=relaxed_schema,
     )
 
 
@@ -290,23 +290,11 @@ def get_proxy_kwargs() -> dict:
     return {}
 
 
-# Backward compatibility alias
-def get_litellm_proxy_kwargs() -> dict:
-    """Backward-compatible alias for get_proxy_kwargs().
-
-    Returns keys in old format: {"api_base": ..., "api_key": ...}
-    """
-    result = get_proxy_kwargs()
-    if result:
-        return {"api_base": result["base_url"], "api_key": result["api_key"]}
-    return {}
-
-
 def _extract_cost_and_usage(complete_resp: Any) -> tuple[float, dict]:
     """Calculate cost and extract usage from response.
 
     Cost and usage are extracted independently - cost calculation failures
-    (e.g., for new models not yet in litellm's price map) should not prevent
+    (e.g., for new models not yet in the price catalog) should not prevent
     usage data from being captured.
     """
     cost = 0.0
@@ -333,7 +321,7 @@ def _extract_cost_and_usage(complete_resp: Any) -> tuple[float, dict]:
     except Exception as e:
         logger.debug(f"Cost calculation unavailable: {e}")
 
-    # Fallback: estimate cost from usage if litellm failed but we have token counts
+    # Fallback: estimate cost from usage if catalog lookup failed but we have token counts
     if cost == 0.0 and usage_dict:
         input_tokens = usage_dict.get("prompt_tokens", 0)
         output_tokens = usage_dict.get("completion_tokens", 0)
@@ -470,7 +458,7 @@ async def call_llm_provider(
         Extracted and cleaned message dictionary
     """
     from .llm import (
-        acompletion_litellm,
+        acompletion,
         remove_metadata,
     )
 
@@ -530,7 +518,7 @@ async def call_llm_provider(
         )
 
     if config.provider_type == ProviderType.OPENAI:
-        # LiteLLM requires explicit provider prefixes for models it cannot auto-detect.
+        # Provider adapters require explicit provider prefixes for models they cannot auto-detect.
         # Ensure OpenAI models include the provider namespace to avoid BadRequestError.
         model_name = config.model_name
 
@@ -540,7 +528,7 @@ async def call_llm_provider(
         logger.debug(
             f"[CALL_LLM_PROVIDER] Using OpenAI provider with model={model_name}, base_url={config.base_url}"
         )
-        complete_resp = await acompletion_litellm(
+        complete_resp = await acompletion(
             messages=clean_messages,
             model=model_name,
             tools=tools,
@@ -552,11 +540,11 @@ async def call_llm_provider(
         )
         error_prefix = "OpenAI"
 
-    else:  # LITELLM
+    else:  # NATIVE
         logger.debug(
-            f"[CALL_LLM_PROVIDER] Using LiteLLM provider with model={config.model_name}"
+            f"[CALL_LLM_PROVIDER] Using native provider with model={config.model_name}"
         )
-        complete_resp = await acompletion_litellm(
+        complete_resp = await acompletion(
             messages=clean_messages,
             model=config.model_name,
             tools=tools,
@@ -566,7 +554,7 @@ async def call_llm_provider(
             api_key=config.api_key,
             model_params=model_params,
         )
-        error_prefix = "LiteLLM"
+        error_prefix = "Native"
 
     # Extract and clean message
     return extract_message_from_response(complete_resp, error_prefix)

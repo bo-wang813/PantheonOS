@@ -211,7 +211,7 @@ class ImageGenerationToolSet(ToolSet):
         """Multimodal image generation (Gemini Nano Banana series).
 
         Uses chat completion API with modalities parameter to generate images.
-        This approach works through LiteLLM Proxy and supports image generation.
+        This approach works through the LLM Proxy and supports image generation.
 
         Supported models:
         - gemini-3-pro-image-preview (Nano Banana Pro, up to 4K)

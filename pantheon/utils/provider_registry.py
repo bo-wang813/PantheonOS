@@ -1,8 +1,8 @@
 """
 Provider registry — loads the catalog and exposes model metadata helpers.
 
-Replaces litellm.utils.get_model_info, litellm.completion_cost,
-litellm.utils.token_counter, and litellm.models_by_provider.
+Provides get_model_info, completion_cost, token_counter,
+and models_by_provider from the local LLM catalog.
 """
 
 import json
@@ -104,7 +104,7 @@ def get_provider_config(provider: str) -> dict:
 def get_model_info(model: str) -> dict:
     """Get model metadata from the catalog.
 
-    Drop-in replacement for litellm.utils.get_model_info().
+    Retrieves model metadata from the local catalog.
 
     Args:
         model: Model string, e.g. 'anthropic/claude-sonnet-4-6' or 'gpt-5.4'
@@ -143,7 +143,7 @@ def completion_cost(
 ) -> float:
     """Calculate completion cost from response or explicit token counts.
 
-    Drop-in replacement for litellm.completion_cost().
+    Calculates completion cost from the local catalog pricing.
     """
     # Extract from response object if provided
     if completion_response is not None:
@@ -173,7 +173,7 @@ def completion_cost(
 def models_by_provider(provider: str) -> list[str]:
     """List all model names for a provider.
 
-    Drop-in replacement for litellm.models_by_provider[provider].
+    Lists all model names for a given provider from the catalog.
     """
     catalog = load_catalog()
     provider_config = catalog.get("providers", {}).get(provider, {})

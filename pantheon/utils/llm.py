@@ -395,7 +395,7 @@ def stream_chunk_builder(chunks: list[dict]) -> Any:
     Aggregates content deltas, tool_call deltas, and usage from collected chunks
     into a SimpleNamespace that mimics the shape of a chat completion response.
 
-    Replaces litellm.stream_chunk_builder().
+    Replaces the stream_chunk_builder from external dependencies.
     """
     from types import SimpleNamespace
 
@@ -523,7 +523,7 @@ def stream_chunk_builder(chunks: list[dict]) -> Any:
     return resp
 
 
-async def acompletion_litellm(
+async def acompletion(
     messages: list[dict],
     model: str,
     tools: list[dict] | None = None,
@@ -1328,7 +1328,7 @@ def count_tokens_in_messages(
 
         # 2. Count tokens for tools definition
         if tools:
-            # litellm token_counter handles tools definition specifically
+            # token_counter handles tools definition specifically
             tools_definition_tokens = _safe_token_counter(model=model, tools=tools)
             total_tokens += tools_definition_tokens
 

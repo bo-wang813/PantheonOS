@@ -190,7 +190,7 @@ async def test_model_completion(provider, model):
     base_url = provider_config.get("base_url")
 
     # Check if this model needs Responses API
-    config = detect_provider(model, force_litellm=False)
+    config = detect_provider(model, relaxed_schema=False)
     uses_responses_api = is_responses_api_model(config)
 
     adapter = get_adapter("openai" if uses_responses_api else sdk_type)
