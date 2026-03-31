@@ -426,9 +426,13 @@ def stream_chunk_builder(chunks: list[dict]) -> Any:
             if "content" in delta and delta["content"]:
                 full_content += delta["content"]
 
-            # Accumulate reasoning_content (OpenAI/Zhipu/Kimi reasoning models)
+            # Accumulate reasoning (various field names across providers)
+            # - reasoning_content: DeepSeek, Zhipu, Kimi, Anthropic adapter, Gemini adapter
+            # - reasoning: Groq gpt-oss models
             if "reasoning_content" in delta and delta["reasoning_content"]:
                 full_reasoning += delta["reasoning_content"]
+            elif "reasoning" in delta and delta["reasoning"]:
+                full_reasoning += delta["reasoning"]
 
             # Accumulate role
             if "role" in delta and delta["role"]:
