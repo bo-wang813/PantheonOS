@@ -37,8 +37,10 @@ def _build_tool_message(tool_call_id: str, content: str) -> dict:
 
 
 def test_apply_tool_result_budget_persists_large_parallel_tool_messages(tmp_path):
-    """Per-tool threshold: shell limit is 50K chars. Each 90K result exceeds
-    its individual limit, so all three are externalized (per-tool path)."""
+    """Aggregate path: 3×90K = 270K exceeds the 200K per-message limit,
+    so the budget externalizes the largest fresh results until under limit.
+    Per-tool thresholds are now enforced at tool execution time (process_tool_result),
+    so apply_tool_result_budget only handles aggregate overflow."""
     memory = Memory("test-memory")
     messages = [
         {
@@ -62,8 +64,8 @@ def test_apply_tool_result_budget_persists_large_parallel_tool_messages(tmp_path
         msg for msg in optimized_tool_messages if msg["content"].startswith(PERSISTED_OUTPUT_TAG)
     ]
 
-    # All three exceed the shell per-tool limit (50K), so all are externalized
-    assert len(persisted) == 3
+    # 270K > 200K aggregate limit — at least 1 result must be externalized
+    assert len(persisted) >= 1
     assert all("Full output saved to:" in m["content"] for m in persisted)
     assert "token_optimization" in memory.extra_data
 
@@ -785,27 +787,19 @@ def test_apply_token_optimizations_runs_snip_before_microcompact(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_per_tool_threshold_externalizes_oversized_single_result(tmp_path):
-    """A single read_file result > 40K chars should be externalized even if
-    the group total is below the 200K global limit."""
+    """Per-tool threshold is now enforced at process_tool_result() time.
+    Here we verify that process_tool_result uses get_per_tool_limit to
+    apply the correct per-tool threshold (read_file = 40K)."""
     from pantheon.utils.token_optimization import PER_TOOL_RESULT_SIZE_CHARS
+    from pantheon.utils.llm import process_tool_result
 
     read_file_limit = PER_TOOL_RESULT_SIZE_CHARS["read_file"]
     big_content = "x" * (read_file_limit + 1000)
 
-    messages = [
-        {
-            "role": "assistant",
-            "content": "reading file",
-            "tool_calls": [{"id": "rf-1", "function": {"name": "read_file", "arguments": "{}"}}],
-        },
-        {"role": "tool", "tool_call_id": "rf-1", "tool_name": "read_file", "content": big_content},
-    ]
-
-    mem = Memory("per-tool-test")
-    result = apply_tool_result_budget(messages, memory=mem, base_dir=tmp_path)
-
-    tool_msg = next(m for m in result if m.get("role") == "tool")
-    assert PERSISTED_OUTPUT_TAG in tool_msg["content"]
+    # process_tool_result with tool_name="read_file" should apply 40K limit
+    result = process_tool_result(big_content, max_length=50_000, tool_name="read_file")
+    # Result should be truncated since content exceeds read_file's 40K limit
+    assert len(result) < len(big_content)
 
 
 def test_per_tool_threshold_keeps_small_result_intact(tmp_path):
@@ -939,24 +933,20 @@ def test_empty_result_guard_runs_inside_apply_tool_result_budget(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_default_per_tool_limit_is_50k_for_unknown_tools(tmp_path):
-    """Unknown tools use DEFAULT_MAX_RESULT_SIZE_CHARS (50K), not the 200K global."""
-    from pantheon.utils.token_optimization import DEFAULT_MAX_RESULT_SIZE_CHARS
-    from pantheon.internal.memory import Memory
-    memory = Memory("default-50k-test")
-    # Content is 60K — above 50K default but below 200K global
+    """Unknown tools use DEFAULT_MAX_RESULT_SIZE_CHARS (50K) as their
+    per-tool limit, enforced at process_tool_result() time."""
+    from pantheon.utils.token_optimization import get_per_tool_limit, DEFAULT_MAX_RESULT_SIZE_CHARS
+    from pantheon.utils.llm import process_tool_result
+
+    # Verify the limit value
+    limit = get_per_tool_limit("unknown_tool", 200_000)
+    assert limit == DEFAULT_MAX_RESULT_SIZE_CHARS
+
+    # Verify process_tool_result applies it
     content = "x" * 60_000
-    messages = [
-        {
-            "role": "assistant",
-            "tool_calls": [{"id": "u1", "function": {"name": "unknown_tool"}}],
-        },
-        {"role": "tool", "tool_call_id": "u1", "tool_name": "unknown_tool", "content": content},
-    ]
-    result = apply_tool_result_budget(messages, memory=memory, base_dir=tmp_path)
-    tool_msg = next(m for m in result if m.get("role") == "tool")
-    assert PERSISTED_OUTPUT_TAG in tool_msg["content"], (
-        f"60K content should be externalized (default limit is {DEFAULT_MAX_RESULT_SIZE_CHARS})"
-    )
+    result = process_tool_result(content, max_length=200_000, tool_name="unknown_tool")
+    # 60K > 50K default limit, so should be truncated
+    assert len(result) < len(content)
 
 
 def test_persistence_opt_out_prevents_externalization(tmp_path):
@@ -1178,21 +1168,30 @@ def test_query_source_agent_summary_does_not_persist(tmp_path):
 
 
 def test_query_source_main_thread_persists(tmp_path):
-    """Main thread query source SHOULD persist to disk."""
+    """Main thread query source SHOULD persist to disk when aggregate limit
+    is exceeded. Per-tool threshold enforcement is now at process_tool_result()."""
     from pantheon.internal.memory import Memory
     memory = Memory("qs-main-test")
+    # Use 3 × 80K = 240K to exceed aggregate 200K limit
     messages = [
         {
             "role": "assistant",
-            "tool_calls": [{"id": "qs2", "function": {"name": "shell"}}],
+            "tool_calls": [
+                {"id": "qs2", "function": {"name": "shell"}},
+                {"id": "qs3", "function": {"name": "shell"}},
+                {"id": "qs4", "function": {"name": "shell"}},
+            ],
         },
-        {"role": "tool", "tool_call_id": "qs2", "tool_name": "shell", "content": "x" * 100_000},
+        {"role": "tool", "tool_call_id": "qs2", "tool_name": "shell", "content": "x" * 80_000},
+        {"role": "tool", "tool_call_id": "qs3", "tool_name": "shell", "content": "y" * 80_000},
+        {"role": "tool", "tool_call_id": "qs4", "tool_name": "shell", "content": "z" * 80_000},
     ]
     result = apply_tool_result_budget(
         messages, memory=memory, base_dir=tmp_path, query_source="repl_main_thread"
     )
-    tool_msg = next(m for m in result if m.get("role") == "tool")
-    assert PERSISTED_OUTPUT_TAG in tool_msg["content"]
+    tool_msgs = [m for m in result if m.get("role") == "tool"]
+    persisted = [m for m in tool_msgs if PERSISTED_OUTPUT_TAG in m["content"]]
+    assert len(persisted) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -1372,3 +1371,128 @@ def test_apply_token_optimizations_async_runs_full_pipeline(tmp_path):
     )
     after = estimate_total_tokens_from_chars(result)
     assert after < before
+
+
+# ---------------------------------------------------------------------------
+# Adaptation tests: Layer 2 ↔ Layer 3 integration
+# ---------------------------------------------------------------------------
+
+
+def test_process_tool_result_uses_per_tool_limit_for_grep():
+    """process_tool_result should apply grep's 20K limit, not the 50K global."""
+    from pantheon.utils.llm import process_tool_result
+
+    content = "x" * 30_000  # > 20K (grep limit) but < 50K (global)
+    result = process_tool_result(content, max_length=50_000, tool_name="grep")
+    assert len(result) < 30_000, "grep output above 20K should be truncated"
+
+
+def test_process_tool_result_uses_global_for_unknown_tool():
+    """Unknown tools fall back to min(DEFAULT_MAX_RESULT_SIZE_CHARS, global_limit)."""
+    from pantheon.utils.llm import process_tool_result
+
+    content = "x" * 40_000  # < 50K
+    result = process_tool_result(content, max_length=50_000, tool_name="my_custom_tool")
+    assert len(result) == 40_000, "40K < 50K fallback, should pass through"
+
+
+def test_process_tool_result_truncated_field_skips_base64_but_not_length():
+    """Tools with 'truncated' field skip base64 filtering but per-tool
+    length limits are ALWAYS applied (P0 fix: no more bypass)."""
+    from pantheon.utils.llm import process_tool_result
+
+    # read_file limit is 40K; content is 45K with 'truncated' flag.
+    # Old behavior: trusted → pass through. New behavior: still externalized.
+    result = {"content": "x" * 45_000, "truncated": True}
+    output = process_tool_result(result, max_length=50_000, tool_name="read_file")
+    # 45K > read_file's 40K limit → should be externalized
+    assert len(output) < 45_000, "truncated field should NOT bypass per-tool limits"
+
+
+def test_unified_format_recognized_by_is_already_externalized():
+    """Content produced by smart_truncate_result (Layer 2) should be
+    recognized by _is_already_externalized (Layer 3) to avoid double processing."""
+    from pantheon.utils.token_optimization import _is_already_externalized
+    from pantheon.utils.truncate import PERSISTED_OUTPUT_TAG, PERSISTED_OUTPUT_CLOSING_TAG
+
+    # Simulate Layer 2 output
+    layer2_output = (
+        f"{PERSISTED_OUTPUT_TAG}\n"
+        f"Output too large (100.0KB). Full output saved to: /tmp/test.json\n\n"
+        f"Preview (first 2.0KB):\nsome preview content\n"
+        f"{PERSISTED_OUTPUT_CLOSING_TAG}"
+    )
+    assert _is_already_externalized(layer2_output), (
+        "Layer 2's <persisted-output> format must be recognized by Layer 3"
+    )
+
+
+def test_stage1_skips_already_externalized_by_layer2(tmp_path):
+    """If Layer 2 already externalized content, Stage 1 should not re-process it."""
+    from pantheon.utils.truncate import PERSISTED_OUTPUT_TAG, PERSISTED_OUTPUT_CLOSING_TAG
+
+    externalized_content = (
+        f"{PERSISTED_OUTPUT_TAG}\n"
+        f"Output too large (100.0KB). Full output saved to: /tmp/test.json\n\n"
+        f"Preview (first 2.0KB):\npreview\n"
+        f"{PERSISTED_OUTPUT_CLOSING_TAG}"
+    )
+    messages = [
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "t1", "function": {"name": "shell"}}],
+        },
+        {"role": "tool", "tool_call_id": "t1", "tool_name": "shell",
+         "content": externalized_content},
+    ]
+    mem = Memory("skip-test")
+    result = apply_tool_result_budget(messages, memory=mem, base_dir=tmp_path)
+    tool_msg = next(m for m in result if m.get("role") == "tool")
+    # Content should be unchanged — already externalized
+    assert tool_msg["content"] == externalized_content
+
+
+def test_per_tool_limit_values():
+    """Verify per-tool limits match the expected CC-aligned values."""
+    from pantheon.utils.token_optimization import get_per_tool_limit
+
+    assert get_per_tool_limit("grep", 200_000) == 20_000
+    assert get_per_tool_limit("read_file", 200_000) == 40_000
+    assert get_per_tool_limit("shell", 200_000) == 50_000
+    assert get_per_tool_limit("bash", 200_000) == 50_000
+    assert get_per_tool_limit("glob", 200_000) == 10_000
+    assert get_per_tool_limit("web_fetch", 200_000) == 30_000
+    # Unknown tool: min(DEFAULT_MAX_RESULT_SIZE_CHARS=50K, global_limit)
+    assert get_per_tool_limit("unknown", 200_000) == 50_000
+    assert get_per_tool_limit("unknown", 30_000) == 30_000
+    # MCP-prefixed tool name normalization
+    assert get_per_tool_limit("mcp__server__grep", 200_000) == 20_000
+
+
+def test_full_pipeline_layer2_then_layer3(tmp_path):
+    """End-to-end: Layer 2 externalizes large content, Layer 3 preserves it."""
+    from pantheon.utils.llm import process_tool_result
+
+    # Simulate Layer 2: large grep output gets externalized
+    big_output = "x" * 25_000  # > grep's 20K limit
+    layer2_result = process_tool_result(big_output, max_length=50_000, tool_name="grep")
+
+    # Build message as agent.py would
+    messages = [
+        {"role": "system", "content": "You are an assistant."},
+        {"role": "user", "content": "search for pattern"},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "g1", "function": {"name": "grep"}}],
+        },
+        {"role": "tool", "tool_call_id": "g1", "tool_name": "grep",
+         "content": layer2_result},
+    ]
+
+    # Layer 3: build_llm_view should preserve the externalized content
+    mem = Memory("e2e-test")
+    view = build_llm_view(messages, memory=mem, base_dir=tmp_path)
+
+    tool_msg = next(m for m in view if m.get("role") == "tool")
+    # Should still be externalized (not re-expanded)
+    assert len(tool_msg["content"]) < 25_000

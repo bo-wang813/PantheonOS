@@ -7,12 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from pantheon.utils.log import logger
+from pantheon.utils.truncate import (
+    PERSISTED_OUTPUT_TAG,
+    PERSISTED_OUTPUT_CLOSING_TAG,
+    PREVIEW_SIZE_BYTES,
+    _format_file_size,
+)
 
-PERSISTED_OUTPUT_TAG = "<persisted-output>"
-PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
 TIME_BASED_MC_CLEARED_MESSAGE = "[Old tool result content cleared]"
 EMPTY_TOOL_RESULT_PLACEHOLDER = "[No output]"
-PREVIEW_SIZE_BYTES = 2000
 BYTES_PER_TOKEN = 4
 MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000
 # CC default: DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000.  Used as fallback when
@@ -232,15 +235,7 @@ def save_content_replacement_state(
     memory.mark_dirty()
 
 
-def _format_file_size(num_bytes: int) -> str:
-    value = float(num_bytes)
-    for unit in ["B", "KB", "MB", "GB"]:
-        if value < 1024 or unit == "GB":
-            if unit == "B":
-                return f"{int(value)}{unit}"
-            return f"{value:.1f}{unit}"
-        value /= 1024
-    return f"{num_bytes}B"
+# _format_file_size is imported from pantheon.utils.truncate
 
 
 def generate_preview(content: str, max_bytes: int) -> tuple[str, bool]:
@@ -492,7 +487,7 @@ def replace_tool_message_contents(
     return result
 
 
-def _get_per_tool_limit(tool_name: str | None, global_limit: int) -> int | float:
+def get_per_tool_limit(tool_name: str | None, global_limit: int) -> int | float:
     """Return the effective size limit for a single tool result.
 
     Mirrors Claude Code's ``getPersistenceThreshold()``:
@@ -536,6 +531,18 @@ def apply_tool_result_budget(
     skip_tool_names: set[str] | None = None,
     query_source: str | None = None,
 ) -> list[dict]:
+    """Safety-net budget enforcement for tool results.
+
+    Per-tool externalization is now handled at tool execution time by
+    ``process_tool_result`` (using per-tool thresholds from
+    ``get_per_tool_limit``).  This function serves as a second pass:
+
+    1. Replays prior externalization decisions (session resume).
+    2. Guards empty tool results.
+    3. Enforces the **per-message aggregate** limit — if a single turn
+       contains many tool results whose combined size exceeds
+       *per_message_limit*, the largest fresh results are externalized.
+    """
     # Guard empty tool results first (CC emptiness guard)
     messages = guard_empty_tool_results(messages)
     state = load_content_replacement_state(memory)
@@ -570,46 +577,33 @@ def apply_tool_result_budget(
         eligible = [candidate for candidate in fresh if candidate not in skipped]
 
         # Separate opt-out tools (Infinity limit) — never externalize them
-        opted_out: list[ToolMessageCandidate] = []
         checkable: list[ToolMessageCandidate] = []
         for candidate in eligible:
             tool_name = tool_name_map.get(candidate.tool_use_id)
             normalized = normalize_tool_name(tool_name)
             if normalized in PERSISTENCE_OPT_OUT_TOOLS:
-                opted_out.append(candidate)
+                state.seen_ids.add(candidate.tool_use_id)
             else:
                 checkable.append(candidate)
-        for candidate in opted_out:
-            state.seen_ids.add(candidate.tool_use_id)
 
-        # Per-tool threshold check: externalize any single result that already
-        # exceeds its own tool-specific limit, regardless of the group total.
-        per_tool_selected: list[ToolMessageCandidate] = []
-        remaining_eligible: list[ToolMessageCandidate] = []
-        for candidate in checkable:
-            tool_name = tool_name_map.get(candidate.tool_use_id)
-            tool_limit = _get_per_tool_limit(tool_name, per_message_limit)
-            if candidate.size > tool_limit:
-                per_tool_selected.append(candidate)
-            else:
-                remaining_eligible.append(candidate)
-
-        # Per-message aggregate check on what's left
+        # Per-message aggregate check: externalize largest results when the
+        # combined size of all results in this turn exceeds per_message_limit.
+        # Individual per-tool thresholds are already enforced at tool execution
+        # time, so this only catches the aggregate-too-large case.
         frozen_size = sum(candidate.size for candidate in frozen)
-        fresh_size = sum(candidate.size for candidate in remaining_eligible)
+        fresh_size = sum(candidate.size for candidate in checkable)
         aggregate_selected = (
-            select_fresh_to_replace(remaining_eligible, frozen_size, per_message_limit)
+            select_fresh_to_replace(checkable, frozen_size, per_message_limit)
             if frozen_size + fresh_size > per_message_limit
             else []
         )
 
-        selected = per_tool_selected + aggregate_selected
-        selected_ids = {candidate.tool_use_id for candidate in selected}
+        selected_ids = {candidate.tool_use_id for candidate in aggregate_selected}
         for candidate in candidates:
             if candidate.tool_use_id not in selected_ids:
                 state.seen_ids.add(candidate.tool_use_id)
 
-        for candidate in selected:
+        for candidate in aggregate_selected:
             if persist_allowed:
                 persisted = persist_tool_result(
                     candidate.content,
@@ -931,18 +925,30 @@ def _is_collapsible_message(message: dict, tool_name_map: dict[str, str]) -> boo
     return False
 
 
-def _extract_read_path(message: dict) -> str | None:
-    """Try to extract a file path from a tool call's arguments."""
-    # Look for path-like argument in the corresponding assistant tool_call
-    tool_name = message.get("tool_name", "")
-    content = message.get("content", "")
-    if not content:
-        return None
-    # Heuristic: first line often contains the path for read tools
-    first_line = content.split("\n", 1)[0].strip()
-    if "/" in first_line and len(first_line) < 200:
-        return first_line
-    return None
+def _extract_read_paths_from_tool_calls(message: dict) -> list[str]:
+    """Extract file paths from an assistant message's tool_call arguments.
+
+    Looks for common path parameter names (path, file_path, filepath, url)
+    in the function arguments of tool_calls that target read/fetch tools.
+    """
+    paths: list[str] = []
+    for tc in message.get("tool_calls") or []:
+        if not isinstance(tc, dict):
+            continue
+        func = tc.get("function", {})
+        name = normalize_tool_name(func.get("name"))
+        if name not in COLLAPSIBLE_READ_TOOLS:
+            continue
+        try:
+            args = json.loads(func.get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for key in ("path", "file_path", "filepath", "url"):
+            val = args.get(key)
+            if isinstance(val, str) and val:
+                paths.append(val)
+                break
+    return paths
 
 
 def collapse_read_search_groups(
@@ -982,6 +988,12 @@ def collapse_read_search_groups(
         while i < n and _is_collapsible_message(messages[i], tool_name_map):
             msg = messages[i]
             tokens += _estimate_message_tokens(msg)
+            if msg.get("role") == "assistant":
+                # Extract file paths from tool_call arguments
+                for path in _extract_read_paths_from_tool_calls(msg):
+                    if path not in seen_paths:
+                        seen_paths.add(path)
+                        read_paths.append(path)
             if msg.get("role") == "tool":
                 tool_name = normalize_tool_name(
                     get_tool_name_for_message(msg, tool_name_map)
@@ -990,10 +1002,6 @@ def collapse_read_search_groups(
                     search_count += 1
                 if tool_name in COLLAPSIBLE_READ_TOOLS:
                     read_count += 1
-                    path = _extract_read_path(msg)
-                    if path and path not in seen_paths:
-                        seen_paths.add(path)
-                        read_paths.append(path)
                 if tool_name in COLLAPSIBLE_LIST_TOOLS:
                     list_count += 1
                 if tool_name in ("shell", "bash"):
@@ -1462,18 +1470,13 @@ def project_memory_messages_for_llm(messages: list[dict]) -> list[dict]:
     return result
 
 
-def build_llm_view(
+def _prepare_llm_view_messages(
     messages: list[dict],
-    memory: Any | None = None,
-    base_dir: Path | None = None,
-    *,
-    is_main_thread: bool = True,
-    snip_config: "SnipConfig | None" = None,
-) -> list[dict]:
-    """Build the projected prompt view from raw history."""
-    if not messages:
-        return []
+) -> tuple[dict | None, list[dict]]:
+    """Shared projection logic for build_llm_view / build_llm_view_async.
 
+    Returns (system_message_or_None, projected_non_system_messages).
+    """
     system_message = next(
         (message for message in messages if message.get("role") == "system"),
         None,
@@ -1482,6 +1485,34 @@ def build_llm_view(
         message for message in messages if message.get("role") != "system"
     ]
     projected = project_memory_messages_for_llm(non_system_messages)
+    projected = [
+        m for m in projected
+        if m.get("role") in ("user", "assistant", "tool")
+    ]
+    return system_message, projected
+
+
+def _wrap_with_system(
+    system_message: dict | None,
+    optimized: list[dict],
+) -> list[dict]:
+    if system_message is not None:
+        return [system_message, *optimized]
+    return optimized
+
+
+def build_llm_view(
+    messages: list[dict],
+    memory: Any | None = None,
+    base_dir: Path | None = None,
+    *,
+    is_main_thread: bool = True,
+    snip_config: "SnipConfig | None" = None,
+) -> list[dict]:
+    """Build the projected prompt view from raw history (sync, no autocompact)."""
+    if not messages:
+        return []
+    system_message, projected = _prepare_llm_view_messages(messages)
     optimized = apply_token_optimizations(
         projected,
         memory=memory,
@@ -1489,9 +1520,31 @@ def build_llm_view(
         is_main_thread=is_main_thread,
         snip_config=snip_config,
     )
-    if system_message is not None:
-        return [system_message, *optimized]
-    return optimized
+    return _wrap_with_system(system_message, optimized)
+
+
+async def build_llm_view_async(
+    messages: list[dict],
+    memory: Any | None = None,
+    base_dir: Path | None = None,
+    *,
+    is_main_thread: bool = True,
+    snip_config: "SnipConfig | None" = None,
+    autocompact_model: str | None = None,
+) -> list[dict]:
+    """Async variant of build_llm_view that enables LLM-based autocompact."""
+    if not messages:
+        return []
+    system_message, projected = _prepare_llm_view_messages(messages)
+    optimized, _ = await apply_token_optimizations_async(
+        projected,
+        memory=memory,
+        base_dir=base_dir,
+        is_main_thread=is_main_thread,
+        snip_config=snip_config,
+        autocompact_model=autocompact_model,
+    )
+    return _wrap_with_system(system_message, optimized)
 
 
 def stabilize_tool_definitions(tools: list[dict]) -> list[dict]:
@@ -1670,7 +1723,23 @@ def inject_cache_control_markers(
     preserves cache for the parent conversation prefix.
 
     Returns a *new* list; input messages are not mutated.
+
+    Requires litellm >= 1.34.0 for cache_control pass-through to Anthropic.
     """
+    # Safety check: litellm must support cache_control field pass-through
+    try:
+        from importlib.metadata import version as pkg_version
+        litellm_version = pkg_version("litellm")
+        major, minor = (int(x) for x in litellm_version.split(".")[:2])
+        if (major, minor) < (1, 34):
+            logger.debug(
+                "litellm {} < 1.34 — skipping cache_control injection",
+                litellm_version,
+            )
+            return messages
+    except Exception:
+        pass  # can't determine version, proceed optimistically
+
     from copy import deepcopy
 
     result = deepcopy(messages)
