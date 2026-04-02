@@ -56,11 +56,46 @@ CUSTOM_ENDPOINT_ENVS: dict[str, CustomEndpointConfig] = {
 # Sentinel object for negative cache (better than empty string)
 _NOT_FOUND = object()
 
+# ============ Local Provider Detection ============
+
+_ollama_cache: dict | None = None
+_ollama_cache_time: float = 0
+
+
+def _detect_ollama(base_url: str = "http://localhost:11434") -> bool:
+    """Check if Ollama is running locally."""
+    try:
+        import httpx
+        resp = httpx.get(f"{base_url}/api/tags", timeout=2)
+        return resp.is_success
+    except Exception:
+        return False
+
+
+def _list_ollama_models(base_url: str = "http://localhost:11434") -> list[str]:
+    """List available models from local Ollama instance (cached 30s)."""
+    import time
+    global _ollama_cache, _ollama_cache_time
+    if _ollama_cache is not None and time.time() - _ollama_cache_time < 30:
+        return _ollama_cache
+
+    try:
+        import httpx
+        resp = httpx.get(f"{base_url}/api/tags", timeout=5)
+        if resp.is_success:
+            models = [m["name"] for m in resp.json().get("models", [])]
+            _ollama_cache = models
+            _ollama_cache_time = time.time()
+            return models
+    except Exception:
+        pass
+    return []
+
 # ============ Default Configuration ============
 # Built-in defaults based on February 2026 flagship models
 # Users can override in settings.json
 
-DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter", "codex"]
+DEFAULT_PROVIDER_PRIORITY = ["openai", "anthropic", "gemini", "zai", "deepseek", "minimax", "moonshot", "qwen", "groq", "mistral", "together_ai", "openrouter", "codex", "ollama"]
 
 # Quality levels map to MODEL LISTS (not single models) for fallback chains
 # Models within each level are ordered by preference
@@ -223,6 +258,7 @@ PROVIDER_API_KEYS = {
     "moonshot": "MOONSHOT_API_KEY",
     "qwen": "DASHSCOPE_API_KEY",
     "codex": "",  # OAuth-based, no env var key
+    "ollama": "",  # Local, no env var key — detected by _detect_ollama()
 }
 
 # ============ Image Generation Model Defaults ============
@@ -283,6 +319,14 @@ class ModelSelector:
             from pantheon.utils.oauth import CodexOAuthManager
             if CodexOAuthManager().is_authenticated():
                 self._available_providers.add("codex")
+        except Exception:
+            pass
+
+        # Check local Ollama
+        try:
+            from pantheon.utils.model_selector import _detect_ollama
+            if _detect_ollama():
+                self._available_providers.add("ollama")
         except Exception:
             pass
 
@@ -369,6 +413,14 @@ class ModelSelector:
         # Custom endpoints don't have predefined model lists
         # They use environment-specified models instead
         if provider in CUSTOM_ENDPOINT_ENVS:
+            return {}
+
+        # Ollama: dynamically list local models
+        if provider == "ollama":
+            models = _list_ollama_models()
+            if models:
+                prefixed = [f"ollama/{m}" for m in models]
+                return {"high": prefixed, "normal": prefixed, "low": prefixed}
             return {}
 
         # Try user configuration first

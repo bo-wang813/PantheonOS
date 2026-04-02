@@ -590,6 +590,9 @@ async def acompletion(
             api_key_env = provider_config.get("api_key_env", "")
             if api_key_env:
                 effective_api_key = os.environ.get(api_key_env, "")
+        # Local providers (Ollama) don't need a real API key
+        if not effective_api_key and provider_config.get("local"):
+            effective_api_key = "ollama"
         effective_model = model_name  # use bare model name with native SDK
 
     adapter = get_adapter(sdk_type)

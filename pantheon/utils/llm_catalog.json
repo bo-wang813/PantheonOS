@@ -1382,6 +1382,15 @@
           "supports_reasoning": true
         }
       }
+    },
+    "ollama": {
+      "display_name": "Ollama (Local)",
+      "sdk": "openai",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "",
+      "openai_compatible": true,
+      "local": true,
+      "models": {}
     }
   }
 }
