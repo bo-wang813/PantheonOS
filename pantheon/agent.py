@@ -128,9 +128,9 @@ class AgentRunContext:
 
     agent: "Agent"
     memory: "Memory | None"
-    execution_context_id: str | None
-    process_step_message: Callable | None
-    process_chunk: Callable | None
+    execution_context_id: str | None = None
+    process_step_message: Callable | None = None
+    process_chunk: Callable | None = None
     cache_safe_runtime_params: Any | None = None
     cache_safe_prompt_messages: list[dict] | None = None
     cache_safe_tool_definitions: list[dict] | None = None
@@ -1356,7 +1356,8 @@ class Agent:
                 # Process and truncate tool result in one step
                 content = process_tool_result(
                     result,
-                    max_length=self.max_tool_content_length
+                    max_length=self.max_tool_content_length,
+                    tool_name=func_name,
                 )
                 
                 tool_message.update({
@@ -1421,7 +1422,7 @@ class Agent:
         # Step 1: Process messages for the model
         async with tracker.measure("message_processing"):
             from pantheon.utils.token_optimization import (
-                build_llm_view,
+                build_llm_view_async,
                 inject_cache_control_markers,
                 is_anthropic_model,
             )
@@ -1431,10 +1432,11 @@ class Agent:
             is_main_thread = (
                 run_context.execution_context_id is None if run_context else True
             )
-            messages = build_llm_view(
+            messages = await build_llm_view_async(
                 messages,
                 memory=optimization_memory,
                 is_main_thread=is_main_thread,
+                autocompact_model=model,
             )
             messages = process_messages_for_model(messages, model)
             # Inject Anthropic prompt-cache markers so the server-side cache
@@ -1442,7 +1444,16 @@ class Agent:
             if is_anthropic_model(model):
                 messages = inject_cache_control_markers(messages)
             if run_context is not None:
-                run_context.cache_safe_prompt_messages = copy.deepcopy(messages)
+                # Selective copy: shallow for messages with string content,
+                # deepcopy only for messages with list content (Anthropic blocks
+                # from inject_cache_control_markers) to avoid mutation issues.
+                cached = []
+                for m in messages:
+                    if isinstance(m.get("content"), list):
+                        cached.append(copy.deepcopy(m))
+                    else:
+                        cached.append({**m})
+                run_context.cache_safe_prompt_messages = cached
 
         # Step 2: Detect provider and get configuration
         provider_config = detect_provider(model, self.force_litellm)
