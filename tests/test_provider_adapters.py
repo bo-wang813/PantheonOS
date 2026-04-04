@@ -6,7 +6,6 @@ Requires API keys in .env file.
 
 import os
 import sys
-from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -165,76 +164,6 @@ async def test_llm_uses_catalog_output_param_for_openai(monkeypatch):
     assert resp.choices[0].message.content == "ok"
     assert captured["max_completion_tokens"] == 64000
     assert "max_tokens" not in captured
-
-
-@pytest.mark.asyncio
-async def test_openai_adapter_recovers_from_unsupported_max_tokens(monkeypatch):
-    from pantheon.utils.adapters.openai_adapter import OpenAIAdapter
-
-    calls = []
-
-    class FakeChunk:
-        def __init__(self, content: str, finish_reason: str | None = None):
-            delta = SimpleNamespace(model_dump=lambda: {"role": "assistant", "content": content})
-            self.choices = [SimpleNamespace(delta=delta, finish_reason=finish_reason)]
-            self._dump = {
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"role": "assistant", "content": content},
-                        "finish_reason": finish_reason,
-                    }
-                ]
-            }
-
-        def model_dump(self):
-            return self._dump
-
-    class FakeResponse:
-        def __init__(self):
-            self._chunks = [
-                FakeChunk("hi"),
-                FakeChunk("", "stop"),
-            ]
-
-        def __aiter__(self):
-            self._iter = iter(self._chunks)
-            return self
-
-        async def __anext__(self):
-            try:
-                return next(self._iter)
-            except StopIteration:
-                raise StopAsyncIteration
-
-    class FakeCompletions:
-        async def create(self, **kwargs):
-            calls.append(dict(kwargs))
-            if len(calls) == 1:
-                raise Exception(
-                    "Unsupported parameter: 'max_tokens' is not supported with this model. "
-                    "Use 'max_completion_tokens' instead."
-                )
-            return FakeResponse()
-
-    class FakeClient:
-        def __init__(self):
-            self.chat = SimpleNamespace(completions=FakeCompletions())
-
-    adapter = OpenAIAdapter()
-    monkeypatch.setattr(adapter, "_make_client", lambda base_url, api_key: FakeClient())
-
-    chunks = await adapter.acompletion(
-        model="gpt-5.4",
-        messages=[{"role": "user", "content": "hello"}],
-        max_tokens=64,
-    )
-
-    assert len(chunks) == 2
-    assert calls[0]["max_tokens"] == 64
-    assert "max_completion_tokens" not in calls[0]
-    assert calls[1]["max_completion_tokens"] == 64
-    assert "max_tokens" not in calls[1]
 
 
 # ============ stream_chunk_builder unit tests ============

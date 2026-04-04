@@ -6,7 +6,6 @@ provider with openai_compatible=true in the catalog.
 """
 
 import os
-import re
 import time
 from typing import Any, Callable
 
@@ -74,61 +73,6 @@ def _normalize_response_format(response_format: Any) -> Any:
         pass
     return response_format
 
-
-_OUTPUT_TOKEN_KEYS = ("max_tokens", "max_completion_tokens", "max_output_tokens")
-
-
-def _clone_call_kwargs(call_kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Clone request kwargs without mutating the current attempt."""
-    cloned = dict(call_kwargs)
-    if "stream_options" in call_kwargs:
-        cloned["stream_options"] = dict(call_kwargs["stream_options"])
-    return cloned
-
-
-def _build_output_token_retry_kwargs(call_kwargs: dict[str, Any], err: Exception) -> tuple[dict[str, Any] | None, str | None]:
-    """Try to recover from vendor-specific output-token parameter failures."""
-    err_text = str(err)
-    current_key = next((key for key in _OUTPUT_TOKEN_KEYS if key in call_kwargs), None)
-    current_value = call_kwargs.get(current_key) if current_key else None
-
-    suggested_match = re.search(
-        r"Unsupported parameter: '([^']+)'.*?Use '([^']+)' instead",
-        err_text,
-        re.IGNORECASE,
-    )
-    if suggested_match:
-        bad_key, suggested_key = suggested_match.groups()
-        value = call_kwargs.get(bad_key, current_value)
-        if value is not None and suggested_key not in call_kwargs:
-            new_kwargs = _clone_call_kwargs(call_kwargs)
-            new_kwargs.pop(bad_key, None)
-            new_kwargs[suggested_key] = value
-            return new_kwargs, f"switching output token parameter from {bad_key} to {suggested_key}"
-
-    max_tokens_match = re.search(
-        r"supports at most (\d+) completion tokens",
-        err_text,
-        re.IGNORECASE,
-    )
-    if current_key and current_value and max_tokens_match:
-        supported_max = int(max_tokens_match.group(1))
-        if int(current_value) > supported_max:
-            new_kwargs = _clone_call_kwargs(call_kwargs)
-            new_kwargs[current_key] = supported_max
-            return new_kwargs, f"clamping {current_key} from {current_value} to {supported_max}"
-
-    if current_key and (
-        "unsupported parameter" in err_text.lower()
-        or "unknown parameter" in err_text.lower()
-    ):
-        new_kwargs = _clone_call_kwargs(call_kwargs)
-        new_kwargs.pop(current_key, None)
-        return new_kwargs, f"removing unsupported output token parameter {current_key}"
-
-    return None, None
-
-
 class OpenAIAdapter(BaseAdapter):
     """Adapter for OpenAI and OpenAI-compatible APIs."""
 
@@ -189,7 +133,6 @@ class OpenAIAdapter(BaseAdapter):
         call_kwargs.update(kwargs)
 
         retry_count = num_retries
-        recovery_attempts = 2
         while retry_count > 0:
             try:
                 stream_start_time = time.time()
@@ -260,14 +203,6 @@ class OpenAIAdapter(BaseAdapter):
                 return collected_chunks
 
             except Exception as e:
-                recovered_kwargs, recovery_reason = _build_output_token_retry_kwargs(call_kwargs, e)
-                if recovered_kwargs is not None and recovery_attempts > 0:
-                    recovery_attempts -= 1
-                    call_kwargs = recovered_kwargs
-                    logger.warning(
-                        f"Retrying chat completion after request adjustment ({recovery_reason}) [{model}]"
-                    )
-                    continue
                 wrapped = _wrap_openai_error(e)
                 if isinstance(wrapped, APIConnectionError):
                     retry_count -= 1
