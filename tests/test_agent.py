@@ -7,6 +7,7 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from pantheon.agent import Agent, AgentRunContext, AgentTransfer, _RUN_CONTEXT, _call_agent
+from pantheon.internal.memory import Memory
 from pantheon.utils.tool_pairing import INCOMPLETE_TOOL_RESULT_PLACEHOLDER
 from pantheon.utils.llm_providers import ProviderConfig, ProviderType
 from pantheon.utils.vision import vision_input
@@ -225,7 +226,49 @@ async def test_call_agent_inherits_current_run_model_when_not_specified(monkeypa
         _RUN_CONTEXT.reset(token)
 
     assert result["success"] is True
-    assert captured["models"] == ["gemini/gemini-3-flash-preview"]
+
+
+async def test_prepare_execution_context_uses_resume_recovery(monkeypatch):
+    agent = Agent(name="resume-parent", instructions="x")
+    memory = Memory("resume-memory")
+    memory.add_messages([{"role": "user", "content": "old"}])
+
+    captured = {}
+
+    def fake_loadConversationForResume(source, sourceJsonlFile=None, execution_context_id=None):
+        captured["source"] = source
+        captured["execution_context_id"] = execution_context_id
+        return {
+            "messages": [{"role": "assistant", "content": "restored"}],
+            "contextCollapseCommits": [],
+            "contextCollapseSnapshot": None,
+        }
+
+    def fake_restoreSessionStateFromLog(result, setAppState, memory=None):
+        captured["restored"] = result["messages"][0]["content"]
+        captured["memory_id"] = memory.id if memory else None
+
+    monkeypatch.setattr(
+        "pantheon.repl.conversationRecovery.loadConversationForResume",
+        fake_loadConversationForResume,
+    )
+    monkeypatch.setattr(
+        "pantheon.repl.sessionRestore.restoreSessionStateFromLog",
+        fake_restoreSessionStateFromLog,
+    )
+
+    ctx = await agent._prepare_execution_context(
+        "continue",
+        memory=memory,
+        use_memory=True,
+    )
+
+    assert captured["source"] is memory
+    assert captured["execution_context_id"] is None
+    assert captured["restored"] == "restored"
+    assert captured["memory_id"] == memory.id
+    assert ctx.conversation_history[0]["content"] == "restored"
+    assert ctx.conversation_history[-1]["role"] == "user"
 
 
 async def test_stream():

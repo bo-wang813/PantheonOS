@@ -163,6 +163,22 @@ class ContextCollapseRecoverResult:
     at_blocking_limit: bool
 
 
+def _load_state_payload(memory: Any | None) -> dict[str, Any]:
+    if memory is None:
+        return {}
+    return _normalize_state_payload(memory.extra_data.get(STATE_KEY))
+
+
+def _save_state_payload(memory: Any | None, payload: dict[str, Any]) -> None:
+    if memory is None:
+        return
+    normalized = _normalize_state_payload(payload)
+    if memory.extra_data.get(STATE_KEY) == normalized:
+        return
+    memory.extra_data[STATE_KEY] = normalized
+    memory.mark_dirty()
+
+
 def create_content_replacement_state() -> ContentReplacementState:
     return ContentReplacementState(seen_ids=set(), replacements={})
 
@@ -179,6 +195,8 @@ CONTEXT_COLLAPSE_COMMIT_THRESHOLD = 0.90
 CONTEXT_COLLAPSE_BLOCKING_THRESHOLD = 0.95
 AUTOCOMPACT_TRIGGER_BUFFER_TOKENS = 13_000
 _COLLAPSE_SKIP_QUERY_SOURCES = frozenset({"compact", "session_memory", "agent_summary"})
+_CONTEXT_COLLAPSE_COMMITS_KEY = "contextCollapseCommits"
+_CONTEXT_COLLAPSE_SNAPSHOT_KEY = "contextCollapseSnapshot"
 
 
 def normalize_cache_safe_value(value: Any) -> Any:
@@ -224,10 +242,73 @@ def _normalize_state_payload(data: Any) -> dict[str, Any]:
     return data
 
 
+def _serialize_context_collapse_commit(
+    commit: ContextCollapseCommit,
+) -> dict[str, Any]:
+    return {
+        "collapseId": commit.collapse_id,
+        "archivedPattern": list(commit.archived_pattern),
+        "summaryMessage": copy.deepcopy(commit.summary_message),
+        "summaryText": commit.summary_text,
+        "archivedCount": commit.archived_count,
+    }
+
+
+def _deserialize_context_collapse_commit(data: Any) -> ContextCollapseCommit | None:
+    if isinstance(data, ContextCollapseCommit):
+        return data
+    if not isinstance(data, dict):
+        return None
+    archived_pattern = data.get("archivedPattern")
+    summary_message = data.get("summaryMessage")
+    if not isinstance(archived_pattern, list) or not isinstance(summary_message, dict):
+        return None
+    try:
+        return ContextCollapseCommit(
+            collapse_id=int(data.get("collapseId", 0)),
+            archived_pattern=tuple(str(item) for item in archived_pattern),
+            summary_message=copy.deepcopy(summary_message),
+            summary_text=str(data.get("summaryText", "")),
+            archived_count=int(data.get("archivedCount", 0)),
+        )
+    except Exception:
+        return None
+
+
+def load_context_collapse_entries(
+    memory: Any | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    payload = _load_state_payload(memory)
+    commits = payload.get(_CONTEXT_COLLAPSE_COMMITS_KEY, [])
+    snapshot = payload.get(_CONTEXT_COLLAPSE_SNAPSHOT_KEY)
+    normalized_commits = [
+        commit
+        for commit in commits
+        if _deserialize_context_collapse_commit(commit) is not None
+    ]
+    return normalized_commits, snapshot if isinstance(snapshot, dict) else None
+
+
+def save_context_collapse_entries(
+    memory: Any | None,
+    commits: list[dict[str, Any]],
+    snapshot: dict[str, Any] | None = None,
+) -> None:
+    if memory is None:
+        return
+    payload = _load_state_payload(memory)
+    payload[_CONTEXT_COLLAPSE_COMMITS_KEY] = [copy.deepcopy(commit) for commit in commits]
+    if snapshot is None:
+        payload.pop(_CONTEXT_COLLAPSE_SNAPSHOT_KEY, None)
+    else:
+        payload[_CONTEXT_COLLAPSE_SNAPSHOT_KEY] = copy.deepcopy(snapshot)
+    _save_state_payload(memory, payload)
+
+
 def load_content_replacement_state(memory: Any | None) -> ContentReplacementState:
     if memory is None:
         return create_content_replacement_state()
-    payload = _normalize_state_payload(memory.extra_data.get(STATE_KEY))
+    payload = _load_state_payload(memory)
     seen_ids = {
         str(item)
         for item in payload.get("seen_ids", [])
@@ -283,14 +364,20 @@ def save_content_replacement_state(
 ) -> None:
     if memory is None:
         return
-    payload = {
+    payload = _load_state_payload(memory)
+    payload.update({
         "seen_ids": sorted(state.seen_ids),
         "replacements": dict(sorted(state.replacements.items())),
-    }
-    if memory.extra_data.get(STATE_KEY) == payload:
-        return
-    memory.extra_data[STATE_KEY] = payload
-    memory.mark_dirty()
+    })
+    _save_state_payload(memory, payload)
+
+
+def load_content_replacement_records(memory: Any | None) -> list[dict[str, str]]:
+    state = load_content_replacement_state(memory)
+    return [
+        {"tool_use_id": tool_use_id, "replacement": replacement}
+        for tool_use_id, replacement in sorted(state.replacements.items())
+    ]
 
 
 # _format_file_size is imported from pantheon.utils.truncate
@@ -1144,8 +1231,8 @@ def _build_collapsed_message(
             file_lines += f" (+{len(group.read_file_paths) - 8} more)"
 
     collapsed_message = {
-        "role": "assistant",
-        "content": f"[Collapsed exploration: {summary}{file_lines}]",
+        "role": "user",
+        "content": f"[contextCollapse] {summary}{file_lines}",
         "_collapsed": True,
         "_collapsed_message_count": group.end_index - group.start_index,
     }
@@ -1188,6 +1275,7 @@ class ContextCollapseManager:
         self._commits: list[ContextCollapseCommit] = []
         self._next_commit_id = 1
         self._health = ContextCollapseHealth()
+        self._snapshot: dict[str, Any] | None = None
 
     def isContextCollapseEnabled(self) -> bool:
         return True
@@ -1196,9 +1284,31 @@ class ContextCollapseManager:
         return ContextCollapseStats(
             collapsed_spans=len(self._commits),
             collapsed_messages=sum(commit.archived_count for commit in self._commits),
-            staged_spans=0,
+            staged_spans=1 if self._snapshot else 0,
             health=self._health,
         )
+
+    def restoreFromEntries(
+        self,
+        commits: list[dict[str, Any]] | list[ContextCollapseCommit],
+        snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        restored: list[ContextCollapseCommit] = []
+        for commit in commits:
+            parsed = _deserialize_context_collapse_commit(commit)
+            if parsed is not None:
+                restored.append(parsed)
+        self._commits = restored
+        self._snapshot = copy.deepcopy(snapshot) if isinstance(snapshot, dict) else None
+        self._next_commit_id = (
+            max((commit.collapse_id for commit in restored), default=0) + 1
+        )
+
+    def exportEntries(self) -> list[dict[str, Any]]:
+        return [_serialize_context_collapse_commit(commit) for commit in self._commits]
+
+    def getSnapshotEntry(self) -> dict[str, Any] | None:
+        return copy.deepcopy(self._snapshot)
 
     def projectView(self, messages: list[dict]) -> list[dict]:
         view = [copy.deepcopy(message) for message in messages]
@@ -1383,8 +1493,27 @@ def _get_context_collapse_manager() -> ContextCollapseManager:
         return manager
 
     manager = ContextCollapseManager()
+    if run_context.memory is not None:
+        commits, snapshot = load_context_collapse_entries(run_context.memory)
+        manager.restoreFromEntries(commits, snapshot)
     run_context.context_collapse_manager = manager
     return manager
+
+
+def restoreFromEntries(
+    commits: list[dict[str, Any]] | list[ContextCollapseCommit],
+    snapshot: dict[str, Any] | None = None,
+    *,
+    memory: Any | None = None,
+) -> None:
+    manager = _get_context_collapse_manager()
+    manager.restoreFromEntries(commits, snapshot)
+    if memory is not None:
+        save_context_collapse_entries(
+            memory,
+            manager.exportEntries(),
+            manager.getSnapshotEntry(),
+        )
 
 
 def collapse_read_search_groups(
@@ -1469,13 +1598,26 @@ def applyCollapsesIfNeeded(
 ) -> ContextCollapseApplyResult:
     """Claude Code-shaped entrypoint for committing context collapses."""
     manager = _get_context_collapse_manager()
-    return manager.applyCollapsesIfNeeded(
+    result = manager.applyCollapsesIfNeeded(
         messages,
         tool_use_context=tool_use_context,
         query_source=query_source,
         model=model,
         min_group_size=min_group_size,
     )
+    try:
+        from pantheon.agent import get_current_run_context
+
+        run_context = get_current_run_context()
+    except Exception:
+        run_context = None
+    if run_context and run_context.memory is not None:
+        save_context_collapse_entries(
+            run_context.memory,
+            manager.exportEntries(),
+            manager.getSnapshotEntry(),
+        )
+    return result
 
 
 def projectView(messages: list[dict]) -> list[dict]:
@@ -1490,12 +1632,26 @@ def recoverFromOverflow(
     min_group_size: int = 3,
 ) -> ContextCollapseRecoverResult:
     """Claude Code-shaped overflow drain hook."""
-    return _get_context_collapse_manager().recoverFromOverflow(
+    manager = _get_context_collapse_manager()
+    result = manager.recoverFromOverflow(
         messages,
         query_source=query_source,
         model=model,
         min_group_size=min_group_size,
     )
+    try:
+        from pantheon.agent import get_current_run_context
+
+        run_context = get_current_run_context()
+    except Exception:
+        run_context = None
+    if run_context and run_context.memory is not None:
+        save_context_collapse_entries(
+            run_context.memory,
+            manager.exportEntries(),
+            manager.getSnapshotEntry(),
+        )
+    return result
 
 
 def isContextCollapseEnabled() -> bool:

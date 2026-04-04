@@ -1470,6 +1470,7 @@ class Agent:
         # Step 1: Process messages for the model
         async with tracker.measure("message_processing"):
             from pantheon.utils.token_optimization import (
+                _estimate_message_tokens,
                 build_llm_view_async,
                 inject_cache_control_markers,
                 supports_explicit_cache_control,
@@ -1488,6 +1489,13 @@ class Agent:
                 is_main_thread=is_main_thread,
                 autocompact_model=model,
                 context_window_model=model,
+            )
+            logger.info(
+                "[resume] prompt_view agent={} model={} messages={} est_tokens={}",
+                self.name,
+                model,
+                len(messages),
+                sum(_estimate_message_tokens(message) for message in messages),
             )
             messages = process_messages_for_model(messages, model)
             # Token optimization can drop earlier assistant tool-call messages
@@ -2258,14 +2266,35 @@ IMPORTANT: You are operating in a restricted workspace environment.
                 f"Input messages: {input_messages} , memory_length: {len(memory_instance.get_messages(execution_context_id=execution_context_id, for_llm=False))} "
                 f"raw memory_length: {len(memory_instance.get_messages(for_llm=False))} memory_id: {memory_instance.id}"
             )
-            conversation_history = (
-                memory_instance.get_messages(
+            conversation_history = []
+            if should_use_memory and memory_instance:
+                from pantheon.repl.conversationRecovery import loadConversationForResume
+                from pantheon.repl.sessionRestore import processResumedConversation
+
+                raw_history = memory_instance.get_messages(
                     execution_context_id=execution_context_id,
-                    for_llm=False
+                    for_llm=False,
                 )
-                if (should_use_memory and memory_instance)
-                else []
-            )
+                resume_result = loadConversationForResume(
+                    memory_instance,
+                    execution_context_id=execution_context_id,
+                )
+                if resume_result is not None:
+                    processed_resume = await processResumedConversation(
+                        resume_result,
+                        {"forkSession": False},
+                        {"memory": memory_instance, "initialState": {}},
+                    )
+                    conversation_history = processed_resume.get("messages", [])
+                    logger.info(
+                        "[resume] agent={} execution_context_id={} raw_history={} resumed_history={}",
+                        self.name,
+                        execution_context_id,
+                        len(raw_history),
+                        len(conversation_history),
+                    )
+                else:
+                    conversation_history = raw_history
             if isinstance(fork_context_messages, list) and fork_context_messages:
                 conversation_history = [
                     *copy.deepcopy(fork_context_messages),

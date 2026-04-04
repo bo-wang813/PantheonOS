@@ -6,6 +6,8 @@ Supports text-only models (DALL-E, Imagen), multimodal models (Gemini Nano Banan
 and native image editing models (OpenAI gpt-image).
 """
 
+import os
+
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.vision import (
     ImageStore,
@@ -13,6 +15,7 @@ from pantheon.utils.vision import (
     expand_image_references_for_llm,
 )
 from pantheon.utils.llm_providers import get_proxy_kwargs
+from pantheon.utils.provider_registry import find_provider_for_model
 
 # Multimodal models that support image input + output via acompletion API
 # Gemini Nano Banana series: Pro / Nano Banana 2 / Nano Banana first-gen
@@ -168,15 +171,22 @@ class ImageGenerationToolSet(ToolSet):
         """Text-only image generation (DALL-E, Imagen)."""
         from pantheon.utils.adapters import get_adapter
 
-        proxy_kwargs = get_proxy_kwargs()
+        provider_key, model_name, provider_config = find_provider_for_model(model)
+        proxy_kwargs = get_proxy_kwargs() if provider_key != "openai" else {}
+        base_url = proxy_kwargs.get("base_url") or provider_config.get("base_url")
+        api_key = proxy_kwargs.get("api_key")
+        if not api_key:
+            api_key_env = provider_config.get("api_key_env")
+            if api_key_env:
+                api_key = os.environ.get(api_key_env)
         adapter = get_adapter("openai")
         response = await adapter.aimage_generation(
-            model=model,
+            model=model_name if provider_key != "unknown" else model,
             prompt=prompt,
             size="1024x1024",
             n=1,
-            base_url=proxy_kwargs.get("base_url"),
-            api_key=proxy_kwargs.get("api_key"),
+            base_url=base_url,
+            api_key=api_key,
         )
 
         # Extract cost from response
@@ -299,16 +309,23 @@ class ImageGenerationToolSet(ToolSet):
 
         from pantheon.utils.adapters import get_adapter
 
-        proxy_kwargs = get_proxy_kwargs()
+        provider_key, model_name, provider_config = find_provider_for_model(model)
+        proxy_kwargs = get_proxy_kwargs() if provider_key != "openai" else {}
+        base_url = proxy_kwargs.get("base_url") or provider_config.get("base_url")
+        api_key = proxy_kwargs.get("api_key")
+        if not api_key:
+            api_key_env = provider_config.get("api_key_env")
+            if api_key_env:
+                api_key = os.environ.get(api_key_env)
         adapter = get_adapter("openai")
         response = await adapter.aimage_edit(
-            model=model,
+            model=model_name if provider_key != "unknown" else model,
             image=resolved_paths,
             prompt=prompt,
             size="1024x1024",
             n=1,
-            base_url=proxy_kwargs.get("base_url"),
-            api_key=proxy_kwargs.get("api_key"),
+            base_url=base_url,
+            api_key=api_key,
         )
 
         # Extract cost from response

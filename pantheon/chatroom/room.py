@@ -965,6 +965,7 @@ class ChatRoom(ToolSet):
         project["workspace_mode"] = workspace_mode
         if workspace_path:
             project["workspace_path"] = workspace_path
+            project["original_cwd"] = str(get_settings().workspace)
         if project:
             memory.extra_data["project"] = project
 
@@ -1192,6 +1193,7 @@ class ChatRoom(ToolSet):
                     session_workspace_dir.mkdir(parents=True, exist_ok=True)
                     workspace_path = str(session_workspace_dir)
                     project["workspace_path"] = workspace_path
+                    project["original_cwd"] = str(settings.workspace)
                     logger.info(f"Created workspace for chat {chat_id}: {workspace_path}")
                 except Exception as e:
                     logger.warning(f"Failed to create workspace for chat {chat_id}: {e}")
@@ -1249,6 +1251,7 @@ class ChatRoom(ToolSet):
                     project["name"] = project_name
                 if workspace_path is not None:
                     project["workspace_path"] = workspace_path
+                    project.setdefault("original_cwd", str(get_settings().workspace))
                 if workspace_mode is not None:
                     project["workspace_mode"] = workspace_mode
 

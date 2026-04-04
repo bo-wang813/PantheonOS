@@ -262,42 +262,85 @@ class FileManagerToolSetBase(ToolSet):
         if not target_path.exists():
             return {"success": False, "error": "Directory does not exist"}
 
+        def _build_file_entry(path: Path) -> dict | None:
+            """Safely build metadata for a directory entry.
+
+            Use lstat() so broken symlinks do not crash listing, and skip
+            entries that disappear between enumeration and metadata lookup.
+            """
+            try:
+                stat_result = path.lstat()
+            except FileNotFoundError:
+                return None
+
+            if path.is_symlink():
+                entry_type = "symlink"
+            elif path.is_file():
+                entry_type = "file"
+            elif path.is_dir():
+                entry_type = "directory"
+            else:
+                entry_type = "other"
+
+            return {
+                "name": path.name,
+                "size": stat_result.st_size if entry_type != "directory" else 0,
+                "type": entry_type,
+                "last_modified": datetime.fromtimestamp(
+                    stat_result.st_mtime
+                ).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+
         if not recursive:
             files = list(target_path.glob("*"))
+            entries = []
+            for file in files:
+                if file.name in self.black_list:
+                    continue
+                entry = _build_file_entry(file)
+                if entry is not None:
+                    entries.append(entry)
             return {
                 "success": True,
-                "files": [
-                    {
-                        "name": file.name,
-                        "size": file.stat().st_size if file.is_file() else 0,
-                        "type": "file" if file.is_file() else "directory",
-                        "last_modified": datetime.fromtimestamp(
-                            file.stat().st_mtime
-                        ).strftime("%Y-%m-%d %H:%M:%S"),
-                    }
-                    for file in files
-                    if file.name not in self.black_list
-                ],
+                "files": entries,
             }
         else:
 
-            def _list_tree(path: Path, current_depth: int = 0) -> dict:
+            def _list_tree(path: Path, current_depth: int = 0) -> dict | None:
                 """Helper function to recursively build the tree structure."""
+                try:
+                    stat_result = path.lstat()
+                except FileNotFoundError:
+                    return None
+
+                if path.is_symlink():
+                    entry_type = "symlink"
+                elif path.is_dir():
+                    entry_type = "directory"
+                elif path.is_file():
+                    entry_type = "file"
+                else:
+                    entry_type = "other"
+
                 result = {
                     "name": path.name,
-                    "type": "directory" if path.is_dir() else "file",
-                    "size": path.stat().st_size if path.is_file() else 0,
+                    "type": entry_type,
+                    "size": stat_result.st_size if entry_type != "directory" else 0,
                 }
-                if path.is_dir():
+                if entry_type == "directory":
                     # Check depth limit before recursing
                     if max_depth is not None and current_depth >= max_depth:
                         result["children"] = []  # Empty children at max depth
                     else:
                         result["children"] = []
-                        for item in sorted(path.iterdir()):
-                            result["children"].append(
-                                _list_tree(item, current_depth + 1)
-                            )
+                        try:
+                            items = sorted(path.iterdir())
+                        except FileNotFoundError:
+                            items = []
+                        for item in items:
+                            child = _list_tree(item, current_depth + 1)
+                            if child is not None:
+                                result["children"].append(child)
                 return result
 
             if not target_path.exists():

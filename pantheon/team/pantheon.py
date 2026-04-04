@@ -48,6 +48,35 @@ Example instruction:
     'Expected Outcome: Report with UMAP visualization and marker genes.'"""
 
 
+def _extract_agent_names_from_chain(chain_path: list | None) -> list[str]:
+    names: list[str] = []
+    for entry in chain_path or []:
+        if not isinstance(entry, str) or not entry:
+            continue
+        names.append(entry.split(":", 1)[0] if ":" in entry else entry)
+    return names
+
+
+def _get_ancestor_agent_names(
+    run_context,
+    context_variables: dict | None = None,
+) -> list[str]:
+    parent_metadata = (context_variables or {}).get("_metadata") or {}
+    chain_path = parent_metadata.get("chain_path")
+    if not isinstance(chain_path, list):
+        return []
+
+    agent_names = _extract_agent_names_from_chain(chain_path)
+    current_name = getattr(getattr(run_context, "agent", None), "name", None)
+    if not current_name:
+        return agent_names
+
+    if current_name in agent_names:
+        current_index = agent_names.index(current_name)
+        return agent_names[:current_index]
+    return agent_names
+
+
 def _get_cache_safe_child_run_overrides(
     run_context,
     target_agent: Agent | RemoteAgent,
@@ -417,12 +446,16 @@ class PantheonTeam(Team):
     async def add_list_agents_tool(self):
         """Add list_agents() tool to all agents."""
 
-        def get_agents_info(exclude_slug: str | None = None) -> list[dict]:
-            """Get info for all agents except the one with exclude_slug."""
+        def get_agents_info(
+            exclude_slug: str | None = None,
+            blocked_slugs: set[str] | None = None,
+        ) -> list[dict]:
+            """Get info for all agents except excluded or blocked slugs."""
             agents_info = []
+            blocked = blocked_slugs or set()
             for agent_name, agent in self.agents.items():
                 slug = _slugify(agent_name)
-                if slug == exclude_slug:
+                if slug == exclude_slug or slug in blocked:
                     continue
                 info = {"name": slug}
                 if hasattr(agent, "description") and agent.description:
@@ -436,11 +469,30 @@ class PantheonTeam(Team):
             def make_list_agents(exclude: str):
                 """Create list_agents function with caller excluded."""
 
-                def list_agents():
+                def list_agents(context_variables: dict | None = None):
                     """List all available agents and their capabilities."""
-                    agents_info = get_agents_info(exclude_slug=exclude)
+                    run_context = get_current_run_context()
+                    blocked_slugs: set[str] = set()
+                    if (
+                        run_context is not None
+                        and run_context.execution_context_id is not None
+                    ):
+                        blocked_slugs.update(
+                            _slugify(name)
+                            for name in _get_ancestor_agent_names(
+                                run_context,
+                                context_variables,
+                            )
+                        )
+                    agents_info = get_agents_info(
+                        exclude_slug=exclude,
+                        blocked_slugs=blocked_slugs,
+                    )
                     if not agents_info:
-                        return "No other agents available."
+                        return (
+                            "No other agents available. Ancestor agents are excluded "
+                            "for delegated sub-agents."
+                        )
 
                     output = "**Available Agents:**\n\n"
                     for info in agents_info:
@@ -482,8 +534,21 @@ class PantheonTeam(Team):
                 Returns:
                     Response content produced by the target agent.
                 """
-                target_agent = self.get_target_agent(agent_name, instruction)
                 run_context = get_current_run_context()
+                ancestor_names = _get_ancestor_agent_names(
+                    run_context,
+                    context_variables,
+                )
+                ancestor_slugs = {_slugify(name) for name in ancestor_names}
+                normalized_target = agent_name.replace(" ", "_").lower()
+                if normalized_target in ancestor_slugs:
+                    raise RuntimeError(
+                        "Delegated sub-agents cannot call their parent or ancestor "
+                        "agent. Delegate to a different agent from list_agents(), "
+                        "or finish the task yourself."
+                    )
+
+                target_agent = self.get_target_agent(agent_name, instruction)
 
                 # Shallow copy context_variables to avoid mutating the original
                 context_variables = dict(context_variables or {})
