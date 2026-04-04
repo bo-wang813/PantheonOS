@@ -6,6 +6,7 @@ Requires API keys in .env file.
 
 import os
 import sys
+from types import SimpleNamespace
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -24,6 +25,7 @@ from pantheon.utils.provider_registry import (
     load_catalog,
     find_provider_for_model,
     get_model_info,
+    get_output_token_param,
     completion_cost,
     models_by_provider,
     token_counter,
@@ -70,6 +72,11 @@ class TestProviderRegistry:
         assert info["max_input_tokens"] == 1_000_000
         assert info["supports_vision"] is True
 
+    def test_get_model_info_openai_gpt_4o_mini(self):
+        info = get_model_info("gpt-4o-mini")
+        assert info["max_input_tokens"] == 128_000
+        assert info["max_output_tokens"] == 16_384
+
     def test_get_model_info_unknown_returns_defaults(self):
         info = get_model_info("fake/nonexistent-model")
         assert info["max_input_tokens"] == 200_000
@@ -85,6 +92,15 @@ class TestProviderRegistry:
     def test_models_by_provider_qwen(self):
         models = models_by_provider("qwen")
         assert len(models) == 9
+
+    def test_output_token_param_catalog(self):
+        assert get_output_token_param("openai/gpt-5.4") == "max_completion_tokens"
+        assert get_output_token_param("anthropic/claude-sonnet-4-6") == "max_tokens"
+        assert get_output_token_param("gemini/gemini-2.5-flash") == "max_output_tokens"
+        assert get_output_token_param("deepseek/deepseek-chat") == "max_tokens"
+        assert get_output_token_param("minimax/MiniMax-M2.5") == "max_tokens"
+        assert get_output_token_param("groq/llama-3.3-70b-versatile") == "max_completion_tokens"
+        assert get_output_token_param("codex/gpt-5.4", api_mode="responses") == "max_output_tokens"
 
     def test_token_counter_basic(self):
         count = token_counter(model="gpt-4", messages=[{"role": "user", "content": "Hello"}])
@@ -105,6 +121,120 @@ class TestProviderRegistry:
                     if model not in all_catalog_models:
                         missing.append(model)
         assert missing == [], f"Models in selector but not in catalog: {missing}"
+
+
+@pytest.mark.asyncio
+async def test_llm_uses_catalog_output_param_for_openai(monkeypatch):
+    from pantheon.utils import llm as llm_module
+    from pantheon.utils import adapters as adapters_module
+
+    captured = {}
+
+    class DummyAdapter:
+        async def acompletion(self, **kwargs):
+            captured.update(kwargs)
+            return [
+                {
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "model": kwargs["model"],
+                },
+                {
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                    "choices": [],
+                },
+            ]
+
+    monkeypatch.setattr(adapters_module, "get_adapter", lambda _sdk: DummyAdapter())
+
+    resp = await llm_module.acompletion(
+        messages=[{"role": "user", "content": "hello"}],
+        model="openai/gpt-5.4",
+        model_params={},
+    )
+
+    assert resp.choices[0].message.content == "ok"
+    assert captured["max_completion_tokens"] == 64000
+    assert "max_tokens" not in captured
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_recovers_from_unsupported_max_tokens(monkeypatch):
+    from pantheon.utils.adapters.openai_adapter import OpenAIAdapter
+
+    calls = []
+
+    class FakeChunk:
+        def __init__(self, content: str, finish_reason: str | None = None):
+            delta = SimpleNamespace(model_dump=lambda: {"role": "assistant", "content": content})
+            self.choices = [SimpleNamespace(delta=delta, finish_reason=finish_reason)]
+            self._dump = {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "content": content},
+                        "finish_reason": finish_reason,
+                    }
+                ]
+            }
+
+        def model_dump(self):
+            return self._dump
+
+    class FakeResponse:
+        def __init__(self):
+            self._chunks = [
+                FakeChunk("hi"),
+                FakeChunk("", "stop"),
+            ]
+
+        def __aiter__(self):
+            self._iter = iter(self._chunks)
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            calls.append(dict(kwargs))
+            if len(calls) == 1:
+                raise Exception(
+                    "Unsupported parameter: 'max_tokens' is not supported with this model. "
+                    "Use 'max_completion_tokens' instead."
+                )
+            return FakeResponse()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    adapter = OpenAIAdapter()
+    monkeypatch.setattr(adapter, "_make_client", lambda base_url, api_key: FakeClient())
+
+    chunks = await adapter.acompletion(
+        model="gpt-5.4",
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=64,
+    )
+
+    assert len(chunks) == 2
+    assert calls[0]["max_tokens"] == 64
+    assert "max_completion_tokens" not in calls[0]
+    assert calls[1]["max_completion_tokens"] == 64
+    assert "max_tokens" not in calls[1]
 
 
 # ============ stream_chunk_builder unit tests ============

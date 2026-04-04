@@ -34,6 +34,13 @@ _DEFAULT_MODEL_INFO = {
     "supports_assistant_prefill": False,
 }
 
+_DEFAULT_OUTPUT_TOKEN_PARAMS = {
+    "openai": "max_tokens",
+    "anthropic": "max_tokens",
+    "google-genai": "max_output_tokens",
+    "codex": "max_output_tokens",
+}
+
 
 @lru_cache(maxsize=1)
 def load_catalog() -> dict:
@@ -96,6 +103,25 @@ def get_provider_config(provider: str) -> dict:
     """Get provider configuration from catalog."""
     catalog = load_catalog()
     return catalog.get("providers", {}).get(provider, {})
+
+
+def get_output_token_param(model: str, api_mode: str = "chat") -> str:
+    """Return the provider/model-specific output token parameter name.
+
+    Args:
+        model: Model string, e.g. ``openai/gpt-5.4`` or ``gpt-4o-mini``.
+        api_mode: ``chat`` for chat/completions style APIs, ``responses`` for
+            OpenAI Responses-style APIs.
+    """
+    provider_key, _model_name, provider_config = find_provider_for_model(model)
+    if api_mode == "responses":
+        return provider_config.get("responses_output_token_param", "max_output_tokens")
+
+    if "chat_output_token_param" in provider_config:
+        return provider_config["chat_output_token_param"]
+
+    sdk_type = provider_config.get("sdk", "openai")
+    return _DEFAULT_OUTPUT_TOKEN_PARAMS.get(sdk_type, "max_tokens")
 
 
 # ============ Model Metadata ============
