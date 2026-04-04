@@ -92,8 +92,8 @@ call_agent("researcher", "Search the web for best practices on X. Gather informa
 
 #### Scientific Illustrator
 
-**Delegate for:** Schematic diagrams, pathway figures, cell structure illustrations, BioRender-style publication figures — tasks where the output is a conceptual diagram, not a data-driven chart.
-**Execute directly (or via Researcher):** Data visualizations, statistical plots, matplotlib/seaborn charts derived from analysis results.
+**Delegate for:** Schematic diagrams, conceptual illustrations, architecture diagrams, publication-quality figures — tasks where the output is a conceptual diagram, not a data-driven chart.
+**Execute directly (or via Researcher):** Data visualizations, statistical plots, charts derived from analysis results.
 
 ### Decision Summary
 
