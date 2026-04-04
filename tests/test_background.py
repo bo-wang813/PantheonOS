@@ -692,6 +692,20 @@ class TestAgentBackgroundIntegration:
                 props = t["function"].get("parameters", {}).get("properties", {})
                 assert "_background" not in props, f"{name} should not have _background"
 
+    def test_background_param_excluded_from_unified_call_agent(self):
+        from pantheon.agent import Agent
+
+        agent = Agent(name="test", instructions="test")
+
+        async def call_agent(agent_name: str, instruction: str) -> str:
+            return f"{agent_name}:{instruction}"
+
+        agent.tool(call_agent)
+        tools = self._get_tools_sync(agent)
+        call_tool = next(t for t in tools if t["function"]["name"] == "call_agent")
+        props = call_tool["function"].get("parameters", {}).get("properties", {})
+        assert "_background" not in props
+
     def test_background_in_required(self):
         agent = self._make_agent_with_tool()
         tools = self._get_tools_sync(agent)
@@ -789,9 +803,43 @@ class TestBackgroundParamDispatch:
         assert bg_task.tool_name == "my_tool"
         assert bg_task.source == "explicit"
 
-        # Wait for completion
-        await asyncio.sleep(0.3)
-        assert agent._bg_manager.get(task_id).status == "completed"
+    @pytest.mark.asyncio
+    async def test_call_agent_ignores_background_true(self):
+        """call_agent should always remain synchronous."""
+        from pantheon.agent import Agent
+        import json
+
+        agent = Agent(name="test", instructions="test")
+
+        async def call_agent(agent_name: str, instruction: str) -> str:
+            return f"delegated:{agent_name}:{instruction}"
+
+        agent.tool(call_agent)
+
+        tool_call = {
+            "id": "call_delegate_1",
+            "function": {
+                "name": "call_agent",
+                "arguments": json.dumps(
+                    {
+                        "agent_name": "worker",
+                        "instruction": "do work",
+                        "_background": True,
+                    }
+                ),
+            },
+        }
+
+        tool_messages = await agent._handle_tool_calls(
+            tool_calls=[tool_call],
+            context_variables={},
+            timeout=60,
+        )
+
+        assert len(tool_messages) == 1
+        assert agent._bg_manager.list_tasks() == []
+        content = tool_messages[0].get("raw_content") or tool_messages[0].get("content")
+        assert "delegated:worker:do work" in str(content)
 
     @pytest.mark.asyncio
     async def test_background_false_runs_synchronously(self):

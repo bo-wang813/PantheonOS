@@ -63,6 +63,21 @@ def _get_cache_safe_child_run_overrides(
     ):
         return {}, child_context_variables
 
+    updated_context_variables = dict(child_context_variables)
+
+    # If the child agent did not explicitly choose a model, inherit the
+    # current dialog/runtime model rather than falling back to global defaults.
+    if not getattr(target_agent, "_model_was_explicit", True):
+        overrides = {"model": cache_params.model}
+        if (
+            "model_params" not in updated_context_variables
+            and cache_params.model_params_raw
+        ):
+            updated_context_variables["model_params"] = copy.deepcopy(
+                cache_params.model_params_raw
+            )
+        return overrides, updated_context_variables
+
     from pantheon.utils.token_optimization import normalize_cache_safe_value
 
     if list(target_agent.models) != list(caller_agent.models):
@@ -76,7 +91,6 @@ def _get_cache_safe_child_run_overrides(
         "response_format": cache_params.response_format_raw,
     }
 
-    updated_context_variables = dict(child_context_variables)
     if (
         "model_params" not in updated_context_variables
         and cache_params.model_params_raw
@@ -731,6 +745,12 @@ class PantheonTeam(Team):
             for aname, agent in self.agents.items()
         }
         agent_name = agent_name.replace(" ", "_").lower()
+        run_context = get_current_run_context()
+        caller_slug = (
+            _slugify(run_context.agent.name)
+            if run_context is not None and getattr(run_context, "agent", None) is not None
+            else None
+        )
 
         if agent_name not in all_agents:
             raise ValueError(
@@ -739,6 +759,12 @@ class PantheonTeam(Team):
 
         if not instruction or not instruction.strip():
             raise ValueError("Instruction cannot be empty")
+
+        if caller_slug is not None and agent_name == caller_slug:
+            raise ValueError(
+                "Agent cannot delegate to itself. Use your own tools to continue, "
+                "or delegate to a different agent from list_agents()."
+            )
 
         target_agent = all_agents[agent_name]
         if not isinstance(target_agent, Agent):

@@ -1362,8 +1362,21 @@ class ChatRoom(ToolSet):
         try:
             from .special_agents import get_chat_name_generator
 
+            preferred_model = None
+            try:
+                team = await self.get_team_for_chat(memory.id)
+                active_agent = team.get_active_agent(memory)
+                preferred_model = (
+                    active_agent.models[0] if getattr(active_agent, "models", None) else None
+                )
+            except Exception:
+                preferred_model = None
+
             chat_name_generator = get_chat_name_generator()
-            new_name = await chat_name_generator.generate_or_update_name(memory)
+            new_name = await chat_name_generator.generate_or_update_name(
+                memory,
+                preferred_model=preferred_model,
+            )
             if new_name and new_name != memory.name:
                 memory.name = new_name
                 # Save only this chat's memory
@@ -1808,8 +1821,18 @@ class ChatRoom(ToolSet):
 
             # Use centralized suggestion generator
             suggestion_generator = get_suggestion_generator()
+            preferred_model = None
+            try:
+                team = await self.get_team_for_chat(chat_id)
+                active_agent = team.get_active_agent(memory)
+                preferred_model = (
+                    active_agent.models[0] if getattr(active_agent, "models", None) else None
+                )
+            except Exception:
+                preferred_model = None
             suggestions_objects = await suggestion_generator.generate_suggestions(
-                formatted_messages
+                formatted_messages,
+                preferred_model=preferred_model,
             )
 
             # Convert to dict format

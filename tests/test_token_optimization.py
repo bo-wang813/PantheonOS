@@ -329,6 +329,43 @@ def test_get_cache_safe_child_run_overrides_inherits_compatible_runtime_params()
     assert child_context_variables["model_params"] == {"temperature": 0, "top_p": 1}
 
 
+def test_get_cache_safe_child_run_overrides_inherits_runtime_model_for_implicit_child():
+    caller = Agent(
+        name="caller",
+        instructions="caller",
+        model="gemini/gemini-3-flash-preview",
+        model_params={"temperature": 0},
+    )
+    target = Agent(
+        name="target",
+        instructions="target",
+        model=None,
+    )
+    run_context = AgentRunContext(
+        agent=caller,
+        memory=None,
+        execution_context_id=None,
+        process_step_message=None,
+        process_chunk=None,
+    )
+    run_context.cache_safe_runtime_params = build_cache_safe_runtime_params(
+        model="gemini/gemini-3-flash-preview",
+        model_params={"temperature": 0.2},
+        response_format=None,
+    )
+
+    overrides, child_context_variables = _get_cache_safe_child_run_overrides(
+        run_context,
+        target,
+        {},
+    )
+
+    assert overrides == {
+        "model": "gemini/gemini-3-flash-preview",
+    }
+    assert child_context_variables["model_params"] == {"temperature": 0.2}
+
+
 def test_prepare_execution_context_prepends_cache_safe_fork_messages():
     agent = Agent(name="child", instructions="child", model="openai/gpt-5.1-mini")
     fork_context_messages = [

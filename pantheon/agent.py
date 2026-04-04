@@ -78,6 +78,9 @@ def _is_model_tag(model_str: str) -> bool:
     Returns:
         True if the string is a tag, False if it's a model name
     """
+    if not model_str or not model_str.strip():
+        return False
+
     # Model names typically contain "/" (provider/model format)
     if "/" in model_str:
         return False
@@ -108,6 +111,39 @@ def _resolve_model_tag(tag: str) -> list[str]:
     return get_model_selector().resolve_model(tag)
 
 
+def _normalize_model_spec(
+    model: str | list[str] | None,
+) -> str | list[str] | None:
+    """Treat empty string model specs as unspecified."""
+    if isinstance(model, str) and not model.strip():
+        return None
+    return model
+
+
+def _resolve_model_spec_with_current_provider(
+    model: str | list[str] | None,
+    current_model: str | None = None,
+) -> str | list[str] | None:
+    """Resolve model tags while preferring the current dialog provider.
+
+    Example: if the active dialog runs on ``codex/gpt-5.4-mini`` and an
+    internal helper asks for ``low``, keep the helper on the Codex provider
+    instead of letting global auto-selection jump to OpenAI.
+    """
+    model = _normalize_model_spec(model)
+    if not isinstance(model, str) or not _is_model_tag(model):
+        return model
+
+    if current_model and "/" in current_model:
+        provider = current_model.split("/", 1)[0].strip().lower()
+        if provider:
+            from .utils.model_selector import get_model_selector
+
+            return get_model_selector().resolve_model_for_provider(model, provider)
+
+    return model
+
+
 # ===== Execution Context =====
 
 
@@ -136,6 +172,7 @@ class AgentRunContext:
     cache_safe_prompt_messages: list[dict] | None = None
     cache_safe_tool_definitions: list[dict] | None = None
     context_collapse_manager: Any | None = None
+    current_model: str | None = None
 
 
 _RUN_CONTEXT: ContextVar[AgentRunContext | None] = ContextVar(
@@ -146,6 +183,17 @@ _RUN_CONTEXT: ContextVar[AgentRunContext | None] = ContextVar(
 def get_current_run_context() -> AgentRunContext | None:
     """Get the runtime context for the current Agent.run invocation."""
     return _RUN_CONTEXT.get()
+
+
+def get_current_run_model() -> str | None:
+    """Get the currently executing model for the active agent run, if any."""
+    run_context = get_current_run_context()
+    if run_context is None:
+        return None
+    if run_context.current_model:
+        return run_context.current_model
+    cache_params = getattr(run_context, "cache_safe_runtime_params", None)
+    return getattr(cache_params, "model", None)
 
 
 # ===== Tool Provider Base Class =====
@@ -513,10 +561,12 @@ class Agent:
         description: str | None = None,
         think_tool: bool = False,
     ):
+        model = _normalize_model_spec(model)
         self.id = uuid4()
         self.name = name
         self.instructions = instructions
         self.description = description
+        self._model_was_explicit = model is not None
 
         # Smart model selection: use ModelSelector when no model specified
         if model is None:
@@ -901,7 +951,7 @@ class Agent:
                 )
 
         # 3. Inject _background parameter into all eligible tool schemas
-        _BG_PARAM_SKIP = {"background_task", "think"}
+        _BG_PARAM_SKIP = {"background_task", "think", "call_agent"}
         _BG_PARAM_SKIP_PREFIXES = ("transfer_to_", "call_agent_")
 
         all_tools = base_tools + provider_tools
@@ -1001,12 +1051,24 @@ class Agent:
             use_memory: bool = False,
         ) -> dict:
             memory = self.memory[:-1] if use_memory else None
+            preferred_model = get_current_run_model() or (self.models[0] if self.models else None)
             return await _call_agent(
                 messages=messages,
                 system_prompt=system_prompt,
-                model=model,
+                model=_resolve_model_spec_with_current_provider(
+                    model,
+                    current_model=preferred_model,
+                ),
                 memory=memory,
             )
+
+        inherited_model = get_current_run_model()
+        caller_models = list(self.models)
+        if inherited_model:
+            caller_models = [inherited_model, *[
+                candidate for candidate in caller_models
+                if candidate != inherited_model
+            ]]
 
         # Build complete context_variables with execution metadata
         full_context = context_variables.copy()
@@ -1014,7 +1076,7 @@ class Agent:
         if tool_call_id is not None:
             full_context["tool_call_id"] = tool_call_id
         full_context["_call_agent"] = _call_agent_wrap
-        full_context["caller_models"] = self.models  # For scfm_router LLM calls
+        full_context["caller_models"] = caller_models  # For scfm_router LLM calls
 
         # Pre-inject output buffer for background task adoption on timeout
         if tool_call_id is not None:
@@ -1178,6 +1240,11 @@ class Agent:
 
             # Pop _background flag before passing params to tool
             run_in_bg = params.pop("_background", False)
+            if func_name == "call_agent" and run_in_bg:
+                logger.warning(
+                    "Ignoring _background=True for call_agent; delegation must remain synchronous"
+                )
+                run_in_bg = False
             from .background import _bg_output_buffer
 
             # Handle parse error or execute tool
@@ -1409,6 +1476,8 @@ class Agent:
             )
 
             run_context = get_current_run_context()
+            if run_context is not None:
+                run_context.current_model = model
             optimization_memory = run_context.memory if run_context else None
             is_main_thread = (
                 run_context.execution_context_id is None if run_context else True
@@ -2101,17 +2170,30 @@ IMPORTANT: You are operating in a restricted workspace environment.
             use_memory: bool = False,
         ) -> dict:
             memory = self.memory[:-1] if use_memory else None  # Exclude current message
+            preferred_model = get_current_run_model() or (self.models[0] if self.models else None)
             return await _call_agent(
                 messages=messages,
                 system_prompt=system_prompt,
-                model=model,
+                model=_resolve_model_spec_with_current_provider(
+                    model,
+                    current_model=preferred_model,
+                ),
                 memory=memory,
             )
+
+        inherited_model = get_current_run_model()
+        caller_models = list(self.models)
+        if inherited_model:
+            caller_models = [inherited_model, *[
+                candidate for candidate in caller_models
+                if candidate != inherited_model
+            ]]
         
         # Build context for injectors
         injector_context = {
             "agent_name": self.name,
             "_call_agent": _call_agent_wrap,
+            "caller_models": caller_models,
             **context_variables,
         }
         
@@ -2542,7 +2624,7 @@ async def _detect_attachments(step_message: dict) -> None:
 async def _call_agent(
     messages: list,
     system_prompt: Optional[str],
-    model: Optional[str] = None,
+    model: Optional[str | list[str]] = None,
     memory: "Memory | None" = None,
 ) -> dict:
     """call agent callback to let toolset use llm agent to sample response
@@ -2556,6 +2638,12 @@ async def _call_agent(
             - current_cost: float - the cost of this nested LLM call
     """
     from .background import _bg_report, _bg_output_buffer
+
+    current_run_model = get_current_run_model()
+    inherited_model = _resolve_model_spec_with_current_provider(
+        model or current_run_model,
+        current_model=current_run_model,
+    )
 
     # Progress callback for background context: reports each sub-agent message
     progress_cb = None
@@ -2578,12 +2666,12 @@ async def _call_agent(
         # Create temporary Agent
         agent = Agent(
             name="sampler",
-            model=model,
+            model=inherited_model,
             instructions=system_prompt or "You are a helpful assistant.",
             memory=memory,
         )
 
-        _bg_report(f"[agent] Sub-agent starting (model={model or 'default'})")
+        _bg_report(f"[agent] Sub-agent starting (model={inherited_model or 'default'})")
 
         # Run Agent with the user query
         result = await agent.run(

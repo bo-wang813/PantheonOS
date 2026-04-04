@@ -685,6 +685,47 @@ class ModelSelector:
 
         return result
 
+    def resolve_model_for_provider(self, tag: str, provider: str | None) -> list[str]:
+        """Resolve tag(s) using a preferred provider when possible.
+
+        This is used when the current dialog is already running on a concrete
+        provider/model and an internal helper requests a quality tag like
+        ``low`` or ``high``. In that case we should stay on the same provider
+        instead of re-running global provider auto-selection and accidentally
+        hopping to a different backend.
+        """
+        if not provider:
+            return self.resolve_model(tag)
+
+        provider_models = self._get_provider_models(provider)
+        if not provider_models:
+            return self.resolve_model(tag)
+
+        tags = [t.strip().lower() for t in tag.split(",")]
+        quality_tag = next((t for t in tags if t in QUALITY_TAGS), "normal")
+        capability_tags = [t for t in tags if t in CAPABILITY_MAP]
+
+        models = provider_models.get(quality_tag, [])
+        if isinstance(models, str):
+            models = [models]
+        if not models:
+            return self.resolve_model(tag)
+
+        if not capability_tags:
+            return list(models)
+
+        result: list[str] = []
+        for model in models:
+            if all(
+                self._check_model_capability(model, cap) for cap in capability_tags
+            ):
+                result.append(model)
+
+        if result:
+            return result
+
+        return self.resolve_model(tag)
+
     def resolve_image_gen_model(self, quality: str = "normal") -> list[str]:
         """Resolve image generation model based on available providers.
 

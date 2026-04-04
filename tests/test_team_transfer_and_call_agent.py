@@ -16,11 +16,29 @@ Or with specific model:
 import asyncio
 import os
 import pytest
-from pantheon.agent import Agent
+from pantheon.agent import Agent, AgentRunContext, _RUN_CONTEXT
 from pantheon.team import PantheonTeam
 
 # Get model from environment or use default
 TEST_MODEL = os.getenv("PANTHEON_MODEL", "gpt-4o-mini")
+
+
+def test_get_target_agent_rejects_self_delegation():
+    coordinator = Agent(name="omicverse_leader", instructions="lead", model=TEST_MODEL)
+    expert = Agent(name="omicverse_expert", instructions="expert", model=TEST_MODEL)
+    team = PantheonTeam(agents=[coordinator, expert])
+
+    token = _RUN_CONTEXT.set(
+        AgentRunContext(
+            agent=expert,
+            memory=None,
+        )
+    )
+    try:
+        with pytest.raises(ValueError, match="cannot delegate to itself"):
+            team.get_target_agent("omicverse_expert", "do work")
+    finally:
+        _RUN_CONTEXT.reset(token)
 
 
 # ============ Test 1: Transfer between team agents ============

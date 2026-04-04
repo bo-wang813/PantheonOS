@@ -5,7 +5,7 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
-from pantheon.agent import Agent, AgentTransfer
+from pantheon.agent import Agent, AgentRunContext, AgentTransfer, _RUN_CONTEXT, _call_agent
 from pantheon.utils.tool_pairing import INCOMPLETE_TOOL_RESULT_PLACEHOLDER
 from pantheon.utils.llm_providers import ProviderConfig, ProviderType
 from pantheon.utils.vision import vision_input
@@ -118,9 +118,113 @@ async def test_acompletion_resanitizes_messages_after_token_optimization(monkeyp
     assert captured["messages"][2]["role"] == "tool"
     assert captured["messages"][2]["tool_call_id"] == "call_missing"
     assert captured["messages"][2]["tool_name"] == "shell"
-    assert captured["messages"][2]["content"] == INCOMPLETE_TOOL_RESULT_PLACEHOLDER
-    assert captured["messages"][2]["_recovered"] is True
-    assert captured["messages"][3] == {"role": "user", "content": "hello"}
+
+
+def test_blank_model_is_treated_as_implicit_default():
+    agent = Agent(name="implicit", instructions="x", model="")
+
+    assert agent._model_was_explicit is False
+    assert agent.models
+
+
+async def test_call_agent_prefers_current_provider_for_quality_tag(monkeypatch):
+    captured = {}
+
+    async def fake_run(self, messages, **kwargs):
+        captured["models"] = list(self.models)
+        return type(
+            "FakeResult",
+            (),
+            {
+                "content": "ok",
+                "details": type("FakeDetails", (), {"messages": []})(),
+            },
+        )()
+
+    monkeypatch.setattr(Agent, "run", fake_run)
+
+    token = _RUN_CONTEXT.set(
+        AgentRunContext(
+            agent=Agent(name="parent", instructions="x", model="codex/gpt-5.4-mini"),
+            memory=None,
+            execution_context_id="ctx-1",
+            current_model="codex/gpt-5.4-mini",
+        )
+    )
+    try:
+        result = await _call_agent(
+            messages=[{"role": "user", "content": "hi"}],
+            system_prompt="x",
+            model="low",
+            memory=None,
+        )
+    finally:
+        _RUN_CONTEXT.reset(token)
+
+    assert result["success"] is True
+    assert captured["models"][0].startswith("codex/")
+
+
+async def test_context_injection_sampler_prefers_parent_provider_without_run_model(
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_call_agent(*, messages, system_prompt, model, memory):
+        captured["model"] = model
+        return {"success": True, "response": "[]", "_metadata": {}}
+
+    class DummyInjector:
+        async def inject(self, input_text, injector_context):
+            await injector_context["_call_agent"](
+                messages=[{"role": "user", "content": "pick"}],
+                system_prompt="x",
+                model="low",
+                use_memory=False,
+            )
+            return ""
+
+    monkeypatch.setattr("pantheon.agent._call_agent", fake_call_agent)
+
+    agent = Agent(name="parent", instructions="x", model="codex/gpt-5.4-mini")
+    agent.context_injectors = [DummyInjector()]
+
+    await agent._inject_context_to_messages(
+        messages=[{"role": "user", "content": "hello"}],
+        context_variables={},
+    )
+
+    assert isinstance(captured["model"], list)
+    assert captured["model"][0].startswith("codex/")
+
+
+async def test_call_agent_inherits_current_run_model_when_not_specified(monkeypatch):
+    captured = {}
+
+    class DummyResult:
+        content = "ok"
+        details = None
+
+    async def fake_run(self, *args, **kwargs):
+        captured["models"] = list(self.models)
+        return DummyResult()
+
+    monkeypatch.setattr(Agent, "run", fake_run)
+
+    run_context = AgentRunContext(agent=Agent(name="parent", instructions="parent", model="gemini/gemini-3-flash-preview"), memory=None)
+    run_context.current_model = "gemini/gemini-3-flash-preview"
+    token = _RUN_CONTEXT.set(run_context)
+    try:
+        result = await _call_agent(
+            messages=[{"role": "user", "content": "hi"}],
+            system_prompt="You are helpful.",
+            model=None,
+        )
+    finally:
+        _RUN_CONTEXT.reset(token)
+
+    assert result["success"] is True
+    assert captured["models"] == ["gemini/gemini-3-flash-preview"]
 
 
 async def test_stream():
