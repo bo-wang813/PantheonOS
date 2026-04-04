@@ -42,6 +42,7 @@ from .utils.llm_providers import (
 )
 from .utils.log import logger
 from .utils.misc import desc_to_openai_dict, run_func
+from .utils.tool_pairing import ensure_tool_result_pairing_with_stats
 if TYPE_CHECKING:
     from .utils.vision import VisionInput
 
@@ -693,10 +694,7 @@ class Agent:
         """Sanitize messages before sending to the LLM.
 
         1. Drop messages missing a role.
-        2. Remove orphaned tool messages (tool messages whose tool_call_id
-           doesn't match any preceding assistant message's tool_calls).
-        3. Remove assistant messages with tool_calls that have no following
-           tool responses (would cause LLM to expect results that don't exist).
+        2. Canonically repair tool-call / tool-result pairing.
         """
         if not messages:
             return []
@@ -706,50 +704,37 @@ class Agent:
         for msg in messages:
             role = msg.get("role")
             if role is None or (isinstance(role, str) and not role.strip()):
-                logger.warning("Dropping message without role: %s", msg)
+                logger.warning("Dropping message without role: {}", msg)
                 continue
             with_role.append(msg)
 
-        # Pass 2: collect valid tool_call_ids from assistant messages,
-        # then drop orphaned tool messages
-        valid_tool_call_ids: set[str] = set()
-        for msg in with_role:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    tc_id = tc.get("id")
-                    if tc_id:
-                        valid_tool_call_ids.add(tc_id)
+        cleaned, stats = ensure_tool_result_pairing_with_stats(with_role)
 
-        cleaned: list[dict] = []
-        dropped = 0
-        for msg in with_role:
-            if msg.get("role") == "tool":
-                tc_id = msg.get("tool_call_id")
-                if tc_id and tc_id not in valid_tool_call_ids:
-                    dropped += 1
-                    continue
-            cleaned.append(msg)
-
-        if dropped:
-            logger.warning("Dropped %d orphaned tool message(s) without matching tool_calls", dropped)
-
-        # Pass 3: ensure every assistant message with tool_calls has at least
-        # one matching tool response following it; strip tool_calls if not
-        responded_ids: set[str] = set()
-        for msg in cleaned:
-            if msg.get("role") == "tool" and msg.get("tool_call_id"):
-                responded_ids.add(msg["tool_call_id"])
-
-        for msg in cleaned:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                has_response = any(
-                    tc.get("id") in responded_ids for tc in msg["tool_calls"]
-                )
-                if not has_response:
-                    logger.warning(
-                        "Stripping tool_calls from assistant message with no tool responses"
-                    )
-                    del msg["tool_calls"]
+        if stats.dropped_orphan_tool_messages:
+            logger.warning(
+                "Dropped {} orphaned tool message(s) without matching tool_calls",
+                stats.dropped_orphan_tool_messages,
+            )
+        if stats.dropped_duplicate_tool_calls:
+            logger.warning(
+                "Dropped {} duplicate assistant tool_call(s)",
+                stats.dropped_duplicate_tool_calls,
+            )
+        if stats.dropped_duplicate_tool_messages:
+            logger.warning(
+                "Dropped {} duplicate tool response message(s)",
+                stats.dropped_duplicate_tool_messages,
+            )
+        if stats.inserted_placeholder_tool_messages:
+            logger.warning(
+                "Inserted {} placeholder tool response message(s) for missing tool outputs",
+                stats.inserted_placeholder_tool_messages,
+            )
+        if stats.dropped_empty_assistant_messages:
+            logger.warning(
+                "Dropped {} empty assistant message(s) after tool_call cleanup",
+                stats.dropped_empty_assistant_messages,
+            )
 
         return cleaned
 
@@ -1432,8 +1417,14 @@ class Agent:
                 memory=optimization_memory,
                 is_main_thread=is_main_thread,
                 autocompact_model=model,
+                context_window_model=model,
             )
             messages = process_messages_for_model(messages, model)
+            # Token optimization can drop earlier assistant tool-call messages
+            # while leaving later tool results. Re-sanitize right before the
+            # provider call so Responses API inputs never contain orphaned
+            # function_call_output items.
+            messages = self._sanitize_messages(messages)
             # Inject prompt-cache markers for providers that support
             # explicit cache_control (Anthropic, Qwen).
             # OpenAI/DeepSeek/Gemini use automatic prefix caching —

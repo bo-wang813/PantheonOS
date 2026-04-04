@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pantheon.utils.log import logger
+from pantheon.utils.tool_pairing import ensure_tool_result_pairing
 from pantheon.utils.truncate import (
     PERSISTED_OUTPUT_TAG,
     PERSISTED_OUTPUT_CLOSING_TAG,
@@ -111,6 +112,15 @@ class CacheSafeRuntimeParams:
     response_format_normalized: Any | None
 
 
+@dataclass(frozen=True)
+class ContextCollapseDecision:
+    total_tokens: int
+    context_window: int
+    usage_ratio: float
+    should_commit: bool
+    at_blocking_limit: bool
+
+
 def create_content_replacement_state() -> ContentReplacementState:
     return ContentReplacementState(seen_ids=set(), replacements={})
 
@@ -121,6 +131,12 @@ def get_time_based_microcompact_config() -> TimeBasedMicrocompactConfig:
         gap_threshold_minutes=TIME_BASED_MC_GAP_THRESHOLD_MINUTES,
         keep_recent=TIME_BASED_MC_KEEP_RECENT,
     )
+
+
+CONTEXT_COLLAPSE_COMMIT_THRESHOLD = 0.90
+CONTEXT_COLLAPSE_BLOCKING_THRESHOLD = 0.95
+AUTOCOMPACT_TRIGGER_BUFFER_TOKENS = 13_000
+_COLLAPSE_SKIP_QUERY_SOURCES = frozenset({"compact", "session_memory", "agent_summary"})
 
 
 def normalize_cache_safe_value(value: Any) -> Any:
@@ -767,9 +783,41 @@ def get_snip_config() -> SnipConfig:
     )
 
 
+def ensure_tool_history_consistency(messages: list[dict]) -> list[dict]:
+    """Canonical tool pairing repair pass for optimized message histories."""
+    return ensure_tool_result_pairing(messages)
+
+
 # CC-identical token estimation constants (from microCompact.ts)
 IMAGE_MAX_TOKEN_SIZE = 2000  # CC: images/documents ≈ 2000 tokens
 _TOKEN_ESTIMATE_PAD_FACTOR = 4 / 3  # CC: pad estimate by 4/3 to be conservative
+
+
+def get_effective_context_window_size(model: str | None) -> int:
+    """Return the model input window used for headroom-based token decisions."""
+    if not model:
+        return 200_000
+
+    try:
+        from pantheon.utils.provider_registry import get_model_info
+
+        model_info = get_model_info(model)
+        return int(model_info.get("max_input_tokens") or 200_000)
+    except Exception:
+        return 200_000
+
+
+def get_autocompact_threshold(
+    model: str | None,
+    *,
+    fallback_budget: int = 100_000,
+) -> int:
+    """Claude-style autocompact threshold based on model context window."""
+    if not model:
+        return fallback_budget
+
+    effective_window = get_effective_context_window_size(model)
+    return max(1, effective_window - AUTOCOMPACT_TRIGGER_BUFFER_TOKENS)
 
 
 def _rough_token_count(text: str) -> int:
@@ -880,7 +928,7 @@ def snip_messages_to_budget(
     if tokens_freed == 0:
         return messages, 0
 
-    result = system_msgs + kept_candidates + tail
+    result = ensure_tool_history_consistency(system_msgs + kept_candidates + tail)
     logger.info(
         "[token optimization] history snip freed ~{} tokens ({} messages dropped)",
         tokens_freed,
@@ -1078,6 +1126,53 @@ def collapse_read_search_groups(
     return result, tokens_saved
 
 
+def get_context_collapse_decision(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    query_source: str | None = None,
+) -> ContextCollapseDecision:
+    """Claude-style headroom gate for context collapse commit decisions."""
+    if query_source in _COLLAPSE_SKIP_QUERY_SOURCES:
+        return ContextCollapseDecision(
+            total_tokens=0,
+            context_window=get_effective_context_window_size(model),
+            usage_ratio=0.0,
+            should_commit=False,
+            at_blocking_limit=False,
+        )
+
+    total_tokens = sum(_estimate_message_tokens(message) for message in messages)
+    context_window = get_effective_context_window_size(model)
+    usage_ratio = (total_tokens / context_window) if context_window > 0 else 0.0
+    return ContextCollapseDecision(
+        total_tokens=total_tokens,
+        context_window=context_window,
+        usage_ratio=usage_ratio,
+        should_commit=usage_ratio >= CONTEXT_COLLAPSE_COMMIT_THRESHOLD,
+        at_blocking_limit=usage_ratio >= CONTEXT_COLLAPSE_BLOCKING_THRESHOLD,
+    )
+
+
+def apply_collapses_if_needed(
+    messages: list[dict],
+    *,
+    model: str | None = None,
+    query_source: str | None = None,
+    min_group_size: int = 3,
+) -> tuple[list[dict], int]:
+    """Check context headroom first, then commit read/search collapses if needed."""
+    decision = get_context_collapse_decision(
+        messages,
+        model=model,
+        query_source=query_source,
+    )
+    if not decision.should_commit:
+        return messages, 0
+
+    return collapse_read_search_groups(messages, min_group_size=min_group_size)
+
+
 # ---------------------------------------------------------------------------
 # Opt4 extension: autocompact (CC-identical LLM-based summarization)
 # Mirrors CC's autoCompactIfNeeded() + compactConversation() —
@@ -1173,7 +1268,9 @@ def should_autocompact(
     messages: list[dict],
     *,
     token_budget: int = AUTOCOMPACT_TOKEN_BUDGET,
+    model: str | None = None,
     query_source: str | None = None,
+    suppress_for_context_collapse: bool = False,
 ) -> bool:
     """CC-identical predicate: should autocompact fire?
 
@@ -1184,8 +1281,11 @@ def should_autocompact(
     # Recursion guard (CC: querySource === 'session_memory' || 'compact')
     if query_source in ("compact", "session_memory", "agent_summary"):
         return False
+    if suppress_for_context_collapse:
+        return False
+    threshold = get_autocompact_threshold(model, fallback_budget=token_budget)
     total = sum(_estimate_message_tokens(m) for m in messages)
-    return total > token_budget
+    return total > threshold
 
 
 async def autocompact_messages(
@@ -1197,6 +1297,7 @@ async def autocompact_messages(
     tracking: AutocompactTrackingState | None = None,
     query_source: str | None = None,
     transcript_path: str | None = None,
+    suppress_for_context_collapse: bool = False,
 ) -> tuple[list[dict], int, AutocompactTrackingState]:
     """CC-identical LLM-based autocompact.
 
@@ -1213,7 +1314,13 @@ async def autocompact_messages(
     tracking = tracking or AutocompactTrackingState()
 
     # Budget check
-    if not should_autocompact(messages, token_budget=token_budget, query_source=query_source):
+    if not should_autocompact(
+        messages,
+        token_budget=token_budget,
+        model=model,
+        query_source=query_source,
+        suppress_for_context_collapse=suppress_for_context_collapse,
+    ):
         return messages, 0, tracking
 
     # Circuit breaker (CC: MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3)
@@ -1370,6 +1477,7 @@ def apply_token_optimizations(
     enable_context_collapse: bool = True,
     enable_autocompact: bool = True,
     query_source: str | None = None,
+    context_window_model: str | None = None,
 ) -> list[dict]:
     """Synchronous 4-stage optimization pipeline.
 
@@ -1390,9 +1498,14 @@ def apply_token_optimizations(
         optimized,
         is_main_thread=is_main_thread,
     )
-    # 4. Context Collapse: fold consecutive read/search groups (CC-style)
+    # 4. Context Collapse: Claude-style gate first, then fold read/search groups.
     if enable_context_collapse:
-        optimized, _ = collapse_read_search_groups(optimized)
+        optimized, _ = apply_collapses_if_needed(
+            optimized,
+            model=context_window_model,
+            query_source=query_source,
+        )
+    optimized = ensure_tool_history_consistency(optimized)
     # Note: autocompact (stage 5) is async — use apply_token_optimizations_async
     return optimized
 
@@ -1410,6 +1523,7 @@ async def apply_token_optimizations_async(
     autocompact_model: str | None = None,
     autocompact_tracking: AutocompactTrackingState | None = None,
     transcript_path: str | None = None,
+    context_window_model: str | None = None,
 ) -> tuple[list[dict], AutocompactTrackingState | None]:
     """Full 5-stage CC-identical optimization pipeline (async).
 
@@ -1432,6 +1546,7 @@ async def apply_token_optimizations_async(
         enable_context_collapse=enable_context_collapse,
         enable_autocompact=False,  # handled below
         query_source=query_source,
+        context_window_model=context_window_model or autocompact_model,
     )
     # Stage 5: Autocompact (async, LLM-based)
     tracking = autocompact_tracking
@@ -1442,7 +1557,9 @@ async def apply_token_optimizations_async(
             query_source=query_source,
             tracking=tracking,
             transcript_path=transcript_path,
+            suppress_for_context_collapse=enable_context_collapse,
         )
+    optimized = ensure_tool_history_consistency(optimized)
     return optimized, tracking
 
 
@@ -1509,6 +1626,7 @@ def build_llm_view(
     *,
     is_main_thread: bool = True,
     snip_config: "SnipConfig | None" = None,
+    context_window_model: str | None = None,
 ) -> list[dict]:
     """Build the projected prompt view from raw history (sync, no autocompact)."""
     if not messages:
@@ -1520,6 +1638,7 @@ def build_llm_view(
         base_dir=base_dir,
         is_main_thread=is_main_thread,
         snip_config=snip_config,
+        context_window_model=context_window_model,
     )
     return _wrap_with_system(system_message, optimized)
 
@@ -1532,6 +1651,7 @@ async def build_llm_view_async(
     is_main_thread: bool = True,
     snip_config: "SnipConfig | None" = None,
     autocompact_model: str | None = None,
+    context_window_model: str | None = None,
 ) -> list[dict]:
     """Async variant of build_llm_view that enables LLM-based autocompact."""
     if not messages:
@@ -1544,6 +1664,7 @@ async def build_llm_view_async(
         is_main_thread=is_main_thread,
         snip_config=snip_config,
         autocompact_model=autocompact_model,
+        context_window_model=context_window_model or autocompact_model,
     )
     return _wrap_with_system(system_message, optimized)
 
@@ -1636,6 +1757,7 @@ def build_delegation_context_message(
     caller (``create_delegation_task_message``).  Older context is represented
     by *summary_text*.
     """
+    raw_projected = project_memory_messages_for_llm(history)
     projected = build_llm_view(history, is_main_thread=False)
     parts: list[str] = []
     if summary_text:
@@ -1645,7 +1767,7 @@ def build_delegation_context_message(
     if recent_context:
         parts.append(f"Recent Context:\n{recent_context}")
 
-    file_paths = extract_persisted_file_paths(projected)
+    file_paths = extract_persisted_file_paths(raw_projected) or extract_persisted_file_paths(projected)
     if file_paths:
         parts.append(
             "Referenced Files (retrieve on demand if needed):\n"

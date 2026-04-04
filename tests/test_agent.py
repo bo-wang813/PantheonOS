@@ -6,9 +6,121 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from pantheon.agent import Agent, AgentTransfer
+from pantheon.utils.tool_pairing import INCOMPLETE_TOOL_RESULT_PLACEHOLDER
+from pantheon.utils.llm_providers import ProviderConfig, ProviderType
 from pantheon.utils.vision import vision_input
 
 HERE = Path(__file__).parent
+
+
+def test_sanitize_messages_repairs_tool_pairing_and_drops_orphans():
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_kept",
+                    "type": "function",
+                    "function": {"name": "tool_a", "arguments": "{}"},
+                },
+                {
+                    "id": "call_missing",
+                    "type": "function",
+                    "function": {"name": "tool_b", "arguments": "{}"},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_kept", "content": "ok"},
+        {"role": "tool", "tool_call_id": "orphan", "content": "bad"},
+    ]
+
+    sanitized = Agent._sanitize_messages(messages)
+
+    assert len(sanitized) == 4
+    assert [tc["id"] for tc in sanitized[1]["tool_calls"]] == [
+        "call_kept",
+        "call_missing",
+    ]
+    assert sanitized[2]["tool_call_id"] == "call_kept"
+    assert sanitized[3]["tool_call_id"] == "call_missing"
+    assert sanitized[3]["content"] == INCOMPLETE_TOOL_RESULT_PLACEHOLDER
+    assert sanitized[3]["_recovered"] is True
+
+
+async def test_acompletion_resanitizes_messages_after_token_optimization(monkeypatch):
+    agent = Agent(name="test", instructions="You are helpful.")
+    captured = {}
+
+    async def fake_build_llm_view_async(*args, **kwargs):
+        return [
+            {"role": "system", "content": "You are helpful."},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_missing",
+                        "type": "function",
+                        "function": {"name": "shell", "arguments": "{}"},
+                    }
+                ],
+            },
+            {"role": "user", "content": "hello"},
+        ]
+
+    async def fake_call_llm_provider(**kwargs):
+        captured["messages"] = kwargs["messages"]
+        return {"role": "assistant", "content": "ok"}
+
+    monkeypatch.setattr(
+        "pantheon.utils.token_optimization.build_llm_view_async",
+        fake_build_llm_view_async,
+    )
+    monkeypatch.setattr(
+        "pantheon.utils.token_optimization.supports_explicit_cache_control",
+        lambda model: False,
+    )
+    monkeypatch.setattr(
+        "pantheon.agent.call_llm_provider",
+        fake_call_llm_provider,
+    )
+    monkeypatch.setattr(
+        "pantheon.agent.detect_provider",
+        lambda model, relaxed_schema: ProviderConfig(
+            provider_type=ProviderType.OPENAI,
+            model_name=model,
+            base_url="https://example.invalid",
+            api_key="test-key",
+            relaxed_schema=relaxed_schema,
+        ),
+    )
+
+    await agent._acompletion(
+        messages=[{"role": "user", "content": "hello"}],
+        model="codex/gpt-5.4-mini",
+        tool_use=False,
+    )
+
+    assert captured["messages"][0] == {"role": "system", "content": "You are helpful."}
+    assert captured["messages"][1] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_missing",
+                "type": "function",
+                "function": {"name": "shell", "arguments": "{}"},
+            }
+        ],
+    }
+    assert captured["messages"][2]["role"] == "tool"
+    assert captured["messages"][2]["tool_call_id"] == "call_missing"
+    assert captured["messages"][2]["tool_name"] == "shell"
+    assert captured["messages"][2]["content"] == INCOMPLETE_TOOL_RESULT_PLACEHOLDER
+    assert captured["messages"][2]["_recovered"] is True
+    assert captured["messages"][3] == {"role": "user", "content": "hello"}
 
 
 async def test_stream():

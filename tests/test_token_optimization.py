@@ -742,6 +742,54 @@ def test_snip_messages_respects_keep_recent():
     assert "9" in kept_ids
 
 
+def test_snip_messages_removes_orphaned_tool_result_when_pair_is_split():
+    from pantheon.utils.token_optimization import SnipConfig, snip_messages_to_budget
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_1", "function": {"name": "shell", "arguments": "{}"}}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "tool_name": "shell",
+            "content": "x" * 4000,
+        },
+        {"role": "user", "content": "recent message", "id": "u1"},
+    ]
+    config = SnipConfig(enabled=True, token_budget=1000, keep_recent=2)
+
+    result, freed = snip_messages_to_budget(messages, config=config)
+
+    assert freed > 0
+    assert all(msg.get("role") != "tool" for msg in result)
+    assert result == [{"role": "user", "content": "recent message", "id": "u1"}]
+
+
+def test_ensure_tool_history_consistency_inserts_placeholder_for_missing_tool_response():
+    from pantheon.utils.token_optimization import ensure_tool_history_consistency
+    from pantheon.utils.tool_pairing import INCOMPLETE_TOOL_RESULT_PLACEHOLDER
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"id": "call_1", "function": {"name": "shell", "arguments": "{}"}}],
+        },
+        {"role": "user", "content": "recent message", "id": "u1"},
+    ]
+
+    result = ensure_tool_history_consistency(messages)
+
+    assert result[0]["tool_calls"][0]["id"] == "call_1"
+    assert result[1]["role"] == "tool"
+    assert result[1]["tool_call_id"] == "call_1"
+    assert result[1]["content"] == INCOMPLETE_TOOL_RESULT_PLACEHOLDER
+    assert result[2] == {"role": "user", "content": "recent message", "id": "u1"}
+
+
 def test_snip_disabled_is_noop():
     from pantheon.utils.token_optimization import SnipConfig, snip_messages_to_budget
 
@@ -1072,6 +1120,63 @@ def test_collapse_breaks_on_assistant_text_output():
     assert tokens_saved == 0
 
 
+def test_apply_collapses_if_needed_skips_when_context_usage_is_low(monkeypatch):
+    from pantheon.utils.token_optimization import apply_collapses_if_needed
+
+    monkeypatch.setattr(
+        "pantheon.utils.provider_registry.get_model_info",
+        lambda model: {"max_input_tokens": 10_000},
+    )
+    messages = [
+        {"role": "user", "content": "Find the bug"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "g1", "function": {"name": "grep"}},
+                {"id": "g2", "function": {"name": "read_file"}},
+                {"id": "g3", "function": {"name": "glob"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "g1", "tool_name": "grep", "content": "match result " * 50},
+        {"role": "tool", "tool_call_id": "g2", "tool_name": "read_file", "content": "/src/main.py\n" + "code " * 100},
+        {"role": "tool", "tool_call_id": "g3", "tool_name": "glob", "content": "file_entry\n" * 20},
+    ]
+
+    result, tokens_saved = apply_collapses_if_needed(messages, model="codex/gpt-5.4-mini")
+
+    assert result == messages
+    assert tokens_saved == 0
+
+
+def test_apply_collapses_if_needed_commits_when_context_usage_is_high(monkeypatch):
+    from pantheon.utils.token_optimization import apply_collapses_if_needed
+
+    monkeypatch.setattr(
+        "pantheon.utils.provider_registry.get_model_info",
+        lambda model: {"max_input_tokens": 1_000},
+    )
+    messages = [
+        {"role": "user", "content": "Find the bug"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "g1", "function": {"name": "grep"}},
+                {"id": "g2", "function": {"name": "read_file"}},
+                {"id": "g3", "function": {"name": "glob"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "g1", "tool_name": "grep", "content": "match result " * 500},
+        {"role": "tool", "tool_call_id": "g2", "tool_name": "read_file", "content": "/src/main.py\n" + "code " * 1000},
+        {"role": "tool", "tool_call_id": "g3", "tool_name": "glob", "content": "file_entry\n" * 200},
+    ]
+
+    result, tokens_saved = apply_collapses_if_needed(messages, model="codex/gpt-5.4-mini")
+
+    assert len(result) < len(messages)
+    assert any(message.get("_collapsed") for message in result)
+    assert tokens_saved > 0
+
+
 # ---------------------------------------------------------------------------
 # New: autocompact tests
 # ---------------------------------------------------------------------------
@@ -1138,6 +1243,28 @@ def test_autocompact_recursion_guard():
             autocompact_messages(messages, token_budget=1000, query_source=src)
         )
         assert result is messages, f"Should skip for query_source={src}"
+
+
+def test_should_autocompact_uses_model_window_and_respects_collapse_suppression(monkeypatch):
+    from pantheon.utils.token_optimization import should_autocompact
+
+    monkeypatch.setattr(
+        "pantheon.utils.provider_registry.get_model_info",
+        lambda model: {"max_input_tokens": 20_000},
+    )
+    messages = [{"role": "user", "content": "x" * 40_000}]
+
+    assert should_autocompact(
+        messages,
+        model="codex/gpt-5.4-mini",
+        token_budget=100_000,
+    )
+    assert not should_autocompact(
+        messages,
+        model="codex/gpt-5.4-mini",
+        token_budget=100_000,
+        suppress_for_context_collapse=True,
+    )
 
 
 # ---------------------------------------------------------------------------
