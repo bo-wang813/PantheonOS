@@ -3,8 +3,15 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
+from textwrap import dedent
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 
 import pytest
 
@@ -17,6 +24,7 @@ from pantheon.internal.package_runtime import (
 from pantheon.internal.package_runtime.manager import PackageManager
 
 SAMPLE_WORKSPACE = Path(__file__).parent / "sample_workspace"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_PACKAGES = {
     path.name
     for path in (SAMPLE_WORKSPACE / ".pantheon" / "packages").iterdir()
@@ -157,3 +165,20 @@ def test_agent_end_to_end_package_pipeline(monkeypatch):
     assert result["report"]["region"] == "APAC"
     assert result["inventory"]["delta"] == 5
     assert result["notification"]["context_id"] == "exec-42"
+
+
+def test_dockerfile_only_references_declared_optional_dependency_extras():
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    declared_extras = set(pyproject["project"]["optional-dependencies"])
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text()
+    referenced_extras = set(re.findall(r"--extra\s+([A-Za-z0-9_-]+)", dockerfile))
+
+    missing_extras = referenced_extras - declared_extras
+
+    assert not missing_extras, dedent(
+        f"""
+        Dockerfile references optional dependency extras that are not declared in pyproject.toml.
+        Missing extras: {sorted(missing_extras)}
+        Declared extras: {sorted(declared_extras)}
+        """
+    ).strip()
