@@ -165,12 +165,13 @@ class DiscordGatewayBot(discord.Client, ChannelRuntime):
                 preview = "🤖 Thinking..."
             try:
                 await placeholder.edit(content=preview[-_MAX_MSG:])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Discord placeholder edit failed: %s", e)
 
         async def _set_progress(label: str) -> None:
             nonlocal last_progress
             last_progress = label
+            logger.info(f"[Discord] progress: {label}")
 
         on_chunk = self.make_chunk_callback(llm_buf, on_update=lambda: _refresh(False))
         on_step = self.make_image_step_callback(
