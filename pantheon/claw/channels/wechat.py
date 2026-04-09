@@ -266,10 +266,31 @@ class WeChatGatewayBot(ChannelRuntime):
         llm_buf: list[str] = []
         image_buf: list[str] = []
         file_buf: list[str] = []
+        last_progress: list[str] = [""]  # mutable for closure access
+
+        async def _progress_cb(label: str) -> None:
+            last_progress[0] = label
 
         # WeChat has no message-edit API — use callbacks only for correct buffer assembly
         on_chunk = self.make_chunk_callback(llm_buf)
-        on_step = self.make_image_step_callback(llm_buf, image_buf, file_buf=file_buf)
+        on_step = self.make_image_step_callback(
+            llm_buf, image_buf, file_buf=file_buf, progress_cb=_progress_cb,
+        )
+
+        # Periodic progress reporter — sends status every 10s since WeChat can't edit messages
+        _progress_task: asyncio.Task | None = None
+
+        async def _periodic_progress() -> None:
+            await asyncio.sleep(5)  # initial delay before first progress message
+            last_sent = ""
+            while True:
+                await asyncio.sleep(10)
+                msg = last_progress[0]
+                if msg and msg != last_sent:
+                    await self._send_text(to_user_id, context_token, f"🤖 Agent is working...\n{msg}")
+                    last_sent = msg
+
+        _progress_task = asyncio.create_task(_periodic_progress())
 
         try:
             result = await self._bridge.run_chat(
@@ -279,8 +300,10 @@ class WeChatGatewayBot(ChannelRuntime):
                 process_chunk=on_chunk,
                 process_step_message=on_step,
             )
+            _progress_task.cancel()
             final = md_to_plain(extract_display_text(result, llm_buf))
             await self._send_text(to_user_id, context_token, final)
+            logger.info(f"[WeChat] image_buf has {len(image_buf)} images, file_buf has {len(file_buf)} files")
             for uri in image_buf:
                 await self._send_image(to_user_id, context_token, uri)
             # WeChat doesn't have a file send API — mention file paths in text
@@ -290,9 +313,13 @@ class WeChatGatewayBot(ChannelRuntime):
                 if names:
                     await self._send_text(to_user_id, context_token, f"📎 Files: {', '.join(names)}")
         except asyncio.CancelledError:
+            if _progress_task:
+                _progress_task.cancel()
             await self._send_text(to_user_id, context_token, "Cancelled.")
             raise
         except Exception as exc:
+            if _progress_task:
+                _progress_task.cancel()
             logger.exception("WeChat analysis failed")
             await self._send_text(to_user_id, context_token, f"Error: {exc}")
         finally:
