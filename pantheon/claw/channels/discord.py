@@ -164,9 +164,17 @@ class DiscordGatewayBot(discord.Client, ChannelRuntime):
             else:
                 preview = "🤖 Thinking..."
             try:
-                await placeholder.edit(content=preview[-_MAX_MSG:])
+                loop = self.loop  # discord.py client's event loop
+                if loop and loop.is_running():
+                    import asyncio
+                    future = asyncio.run_coroutine_threadsafe(
+                        placeholder.edit(content=preview[-_MAX_MSG:]), loop
+                    )
+                    future.result(timeout=5)
+                else:
+                    await placeholder.edit(content=preview[-_MAX_MSG:])
             except Exception as e:
-                logger.debug("Discord placeholder edit failed: %s", e)
+                logger.debug(f"Discord placeholder edit failed: {e}")
 
         async def _set_progress(label: str) -> None:
             nonlocal last_progress
