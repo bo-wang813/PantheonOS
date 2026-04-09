@@ -418,9 +418,14 @@ class ModelSelector:
         Returns:
             Dict mapping quality levels to model lists
         """
-        # Custom endpoints don't have predefined model lists
-        # They use environment-specified models instead
+        # Custom endpoints: use the configured model from env var
         if provider in CUSTOM_ENDPOINT_ENVS:
+            import os
+            config = CUSTOM_ENDPOINT_ENVS[provider]
+            model = os.environ.get(config.model_env, "")
+            if model:
+                prefixed = f"{provider}/{model}"
+                return {"high": [prefixed], "normal": [prefixed], "low": [prefixed]}
             return {}
 
         # Ollama: dynamically list local models
