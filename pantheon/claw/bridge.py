@@ -449,12 +449,23 @@ class ChatRoomGatewayBridge:
         )
 
     @staticmethod
-    def _build_message(user_text: str, image_uris: list[str] | None = None) -> list[dict[str, Any]]:
+    def _build_message(
+        user_text: str,
+        image_uris: list[str] | None = None,
+        sender_name: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Build a message payload, optionally with images.
+
+        When *sender_name* is provided, it is prepended so the agent knows
+        who is speaking (useful in group chats with multiple users).
 
         When *image_uris* are provided the message uses the multimodal content-
         array format (``_llm_content`` for the LLM, ``content`` for display).
         """
+        # Prepend sender name for group context
+        if sender_name:
+            user_text = f"[{sender_name}]: {user_text}" if user_text else f"[{sender_name}]"
+
         if not image_uris:
             return [{"role": "user", "content": user_text}]
 
@@ -472,6 +483,7 @@ class ChatRoomGatewayBridge:
         user_text: str,
         *,
         image_uris: list[str] | None = None,
+        sender_name: str | None = None,
         process_chunk=None,
         process_step_message=None,
     ) -> dict[str, Any]:
@@ -479,7 +491,7 @@ class ChatRoomGatewayBridge:
         return await self._dispatch(
             self._chatroom.chat(
                 chat_id=entry["chat_id"],
-                message=self._build_message(user_text, image_uris),
+                message=self._build_message(user_text, image_uris, sender_name),
                 process_chunk=process_chunk,
                 process_step_message=process_step_message,
             )

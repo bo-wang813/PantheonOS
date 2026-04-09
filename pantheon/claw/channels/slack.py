@@ -187,6 +187,7 @@ class SlackGatewayApp(ChannelRuntime):
         client,
         user_text: str,
         image_uris: list[str] | None = None,
+        sender_name: str | None = None,
     ) -> None:
         route_key = route.route_key()
         placeholder = await self._post(client, body, ":thinking_face: Thinking...", thread=bool(route.thread_id))
@@ -230,6 +231,7 @@ class SlackGatewayApp(ChannelRuntime):
                 route,
                 user_text,
                 image_uris=image_uris,
+                sender_name=sender_name,
                 process_chunk=on_chunk,
                 process_step_message=on_step,
             )
@@ -297,8 +299,19 @@ class SlackGatewayApp(ChannelRuntime):
                 self._queue_message(route_key, tail or text or "[file]")
                 await self._post(client, body, "Queued after current analysis.", thread=bool(route.thread_id))
                 return
+            # Resolve sender name for group context
+            sender_name = None
+            if route.scope_type != "dm":
+                user_id = event.get("user", "")
+                if user_id:
+                    try:
+                        info = await client.users_info(user=user_id)
+                        profile = info.get("user", {}).get("profile", {})
+                        sender_name = profile.get("display_name") or profile.get("real_name") or user_id
+                    except Exception:
+                        sender_name = user_id
             task = asyncio.create_task(
-                self._analysis_wrapper(route, body, client, tail or text, image_uris=image_uris or None)
+                self._analysis_wrapper(route, body, client, tail or text, image_uris=image_uris or None, sender_name=sender_name)
             )
             self._set_task(route_key, task, tail or text or "[file]")
 
@@ -327,10 +340,20 @@ class SlackGatewayApp(ChannelRuntime):
                 self._queue_message(route_key, tail or cleaned or "[file]")
                 await self._post(client, body, "Queued after current analysis.", thread=True)
                 return
+            # Resolve sender name for group context
+            sender_name = None
+            user_id = event.get("user", "")
+            if user_id:
+                try:
+                    info = await client.users_info(user=user_id)
+                    profile = info.get("user", {}).get("profile", {})
+                    sender_name = profile.get("display_name") or profile.get("real_name") or user_id
+                except Exception:
+                    sender_name = user_id
             task = asyncio.create_task(
-                self._analysis_wrapper(route, body, client, tail or cleaned, image_uris=image_uris or None)
+                self._analysis_wrapper(route, body, client, tail or cleaned, image_uris=image_uris or None, sender_name=sender_name)
             )
-            self._set_task(route_key, task, tail or cleaned or "[image]")
+            self._set_task(route_key, task, tail or cleaned or "[file]")
 
     async def run(self) -> None:
         handler = AsyncSocketModeHandler(self._app, self._app_token)

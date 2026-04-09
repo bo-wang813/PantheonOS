@@ -157,11 +157,17 @@ class DiscordGatewayBot(discord.Client, ChannelRuntime):
             refresh_cb=lambda: _refresh(True),
         )
 
+        # Sender name for group context
+        sender_name = None
+        if route.scope_type != "dm":
+            sender_name = message.author.display_name or message.author.name
+
         try:
             result = await self._bridge.run_chat(
                 route,
                 user_text,
                 image_uris=image_uris,
+                sender_name=sender_name,
                 process_chunk=on_chunk,
                 process_step_message=on_step,
             )

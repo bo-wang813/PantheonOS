@@ -171,11 +171,18 @@ class TelegramGatewayBot(ChannelRuntime):
             refresh_cb=lambda: _refresh(True),
         )
 
+        # Extract sender name for group context
+        user = update.effective_user
+        sender_name = None
+        if user and route.scope_type != "dm":
+            sender_name = user.full_name or user.username or str(user.id)
+
         try:
             result = await self._bridge.run_chat(
                 route,
                 user_text,
                 image_uris=image_uris,
+                sender_name=sender_name,
                 process_chunk=on_chunk,
                 process_step_message=on_step,
             )
