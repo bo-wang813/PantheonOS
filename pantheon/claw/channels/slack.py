@@ -45,7 +45,6 @@ class SlackGatewayApp(ChannelRuntime):
             channel="slack",
             scope_type="channel",
             scope_id=channel_id,
-            thread_id=str(thread_ts or event.get("ts") or ""),
             sender_id=str(event.get("user") or ""),
         )
 
