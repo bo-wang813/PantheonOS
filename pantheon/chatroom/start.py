@@ -59,7 +59,7 @@ def _open_url_in_windows_browser(url: str) -> bool:
             return True
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             last_error = exc
-            logger.debug(f"[FRONTEND] WSL browser command failed: {command[0]}: {exc}")
+            logger.warning(f"[FRONTEND] WSL browser command failed: {command[0]}: {exc}")
 
     if last_error is not None:
         raise RuntimeError(
