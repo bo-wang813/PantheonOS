@@ -382,24 +382,31 @@ class ChatNameGenerator:
         self._name_agent: Optional[Agent] = None
         self._name_agent_model: str | None = None
 
+    # Default names that indicate the chat hasn't been meaningfully named yet
+    DEFAULT_NAMES = {"New Chat", "New Chat in Project", "新建聊天", "在项目中新建聊天", ""}
+
     async def generate_or_update_name(
         self,
         memory: Memory,
         preferred_model: str | None = None,
     ) -> str:
-        """Generate or update chat name"""
-        agent_messages = memory.get_messages(None)
+        """Generate a chat name only if the chat still has a default name.
 
-        # Only generate after first conversation (2+ messages)
-        if len(agent_messages) < 2:
+        Rules:
+        - Only rename if current name is a default placeholder (e.g. "New Chat")
+        - Need at least 1 user message to generate a meaningful name
+        - Never overwrite a name that was already set (by user or previous generation)
+        """
+        # Already has a meaningful name — don't touch it
+        if not self._is_default_name(memory.name):
             return memory.name
 
-        # Check if we should generate/update
-        if not self._should_generate_name(memory, agent_messages):
+        agent_messages = memory.get_messages(None)
+        user_msgs = [m for m in agent_messages if m.get("role") == "user"]
+        if not user_msgs:
             return memory.name
 
         try:
-            # Try AI generation first
             new_name = await self._generate_with_ai(
                 agent_messages,
                 preferred_model=preferred_model,
@@ -415,26 +422,19 @@ class ChatNameGenerator:
         self._update_metadata(memory, len(agent_messages))
         return fallback
 
-    def _should_generate_name(
-        self, memory: Memory, messages: List[Dict[str, Any]]
-    ) -> bool:
-        """Milestone-based generation logic to handle exploratory phases"""
-        message_count = len(messages)
-        last_count = memory.extra_data.get("last_name_generation_message_count", 0)
-        has_generated = memory.extra_data.get("name_generated", False)
-
-        # 0. Backfill: If never generated and we have context (2+ msgs)
-        if message_count >= 2 and not has_generated:
+    def _is_default_name(self, name: str) -> bool:
+        """Check if a name is a default placeholder that should be replaced."""
+        if not name:
             return True
-
-        # 1. Milestones: Denser at the start [2, 3, 5, 10, 20, 50]
-        # To capture rapid intent shifts during initial exploratory phases
-        milestones = [2, 3, 5, 10, 20, 50]
-        for milestone in milestones:
-            if message_count >= milestone and last_count < milestone:
-                return True
-
-        # No further automatic updates to preserve stability
+        stripped = name.strip()
+        if stripped in self.DEFAULT_NAMES:
+            return True
+        # Match patterns like "New Chat", "New Chat (2)", "Chat 04-14 11:30"
+        if stripped.startswith("New Chat") or stripped.startswith("Chat "):
+            return True
+        # Chinese defaults: "新建聊天", "新建聊天 (2)"
+        if stripped.startswith("新建聊天"):
+            return True
         return False
 
     async def _generate_with_ai(

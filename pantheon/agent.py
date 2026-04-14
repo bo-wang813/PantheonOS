@@ -676,6 +676,7 @@ class Agent:
         async def background_task(
             action: str = "list",
             task_id: str = "",
+            timeout: int = 10,
         ) -> dict:
             """Manage and monitor background tasks.
 
@@ -683,16 +684,23 @@ class Agent:
                 action: Operation to perform:
                     - "list": List all background tasks (default when no task_id)
                     - "status": Get status, progress and result of a specific task (requires task_id)
+                    - "wait": Wait for a task to complete, up to timeout seconds (requires task_id).
+                              Use this instead of polling with repeated status calls.
                     - "cancel": Cancel a running task (requires task_id)
                     - "remove": Remove a task from the list, cancels if still running (requires task_id)
-                task_id: ID of the task (e.g. 'bg_1'). Required for status/cancel/remove.
+                task_id: ID of the task (e.g. 'bg_1'). Required for status/wait/cancel/remove.
+                timeout: Max seconds to wait for the "wait" action (default 10). If the task
+                         hasn't completed by then, returns current status so you can decide
+                         whether to wait again or do something else.
 
             Returns:
                 dict with task details or task list
 
             Examples:
                 background_task()  # List all tasks
-                background_task(action="status", task_id="bg_1")  # Check progress
+                background_task(action="status", task_id="bg_1")  # Check once
+                background_task(action="wait", task_id="bg_1")  # Wait up to 10s
+                background_task(action="wait", task_id="bg_1", timeout=30)  # Wait up to 30s
                 background_task(action="cancel", task_id="bg_1")  # Cancel task
                 background_task(action="remove", task_id="bg_1")  # Remove task
             """
@@ -710,6 +718,30 @@ class Agent:
                 if task is None:
                     return {"error": f"Task '{task_id}' not found."}
                 return bg_manager.to_summary(task)
+
+            elif action == "wait":
+                if not task_id:
+                    return {"error": "task_id is required for wait action"}
+                task = bg_manager.get(task_id)
+                if task is None:
+                    return {"error": f"Task '{task_id}' not found."}
+                # Already finished
+                if task.status != "running":
+                    return bg_manager.to_summary(task)
+                # Wait with polling
+                timeout = max(1, min(timeout, 300))  # clamp 1-300s
+                poll_interval = 1.0
+                elapsed = 0.0
+                while elapsed < timeout:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+                    if task.status != "running":
+                        return bg_manager.to_summary(task)
+                # Timed out — return current status
+                summary = bg_manager.to_summary(task)
+                summary["timed_out"] = True
+                summary["waited_seconds"] = round(elapsed, 1)
+                return summary
 
             elif action == "cancel":
                 if not task_id:
@@ -730,7 +762,7 @@ class Agent:
 
             else:
                 return {
-                    "error": f"Unknown action '{action}'. Must be one of: list, status, cancel, remove"
+                    "error": f"Unknown action '{action}'. Must be one of: list, status, wait, cancel, remove"
                 }
 
         self._base_functions["background_task"] = background_task

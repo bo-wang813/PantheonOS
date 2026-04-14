@@ -1101,6 +1101,7 @@ class ChatRoom(ToolSet):
                             "last_activity_date", None
                         ),
                         "project": project,
+                        "memory_path": memory.file_path,
                     }
                 )
 
@@ -1694,6 +1695,14 @@ class ChatRoom(ToolSet):
             chat_id, process_chunk, process_step_message, wait=False
         )
 
+        # Generate chat name as soon as user message arrives (non-blocking).
+        # No need to wait for agent response — user message is enough context.
+        # Only fires if the chat still has a default name (e.g. "New Chat").
+        if self._enable_auto_chat_name:
+            task = asyncio.create_task(self._background_rename_chat(memory))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
         try:
             await thread.run()
 
@@ -1709,13 +1718,6 @@ class ChatRoom(ToolSet):
                             "role": "tool",
                             "raw_content": {"base64_uri": uris},
                         })
-
-            # Generate or update chat name in background (non-blocking)
-            # Only enabled for UI mode to avoid unnecessary LLM calls in REPL/API
-            if self._enable_auto_chat_name:
-                task = asyncio.create_task(self._background_rename_chat(memory))
-                self._background_tasks.add(task)
-                task.add_done_callback(self._background_tasks.discard)
 
             # Publish chat finished message if NATS streaming enabled
             if self._nats_adapter is not None:
