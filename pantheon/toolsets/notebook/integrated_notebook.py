@@ -17,6 +17,7 @@ Frontend-only tools (not for agents):
 """
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -103,6 +104,9 @@ class IntegratedNotebookToolSet(ToolSet):
         # Notebook file locks to prevent concurrent edit operations
         import asyncio
         self._notebook_locks: Dict[str, asyncio.Lock] = {}
+
+        # Context creation lock to prevent duplicate kernel creation on concurrent calls
+        self._context_creation_locks: Dict[tuple, asyncio.Lock] = {}
 
     async def run_setup(self):
         """Setup toolset"""
@@ -269,16 +273,12 @@ class IntegratedNotebookToolSet(ToolSet):
                     [exe, "env", "list", "--json"],
                     capture_output=True, text=True, timeout=10,
                 )
-                import json as _json
-                data = _json.loads(result.stdout)
+                data = json.loads(result.stdout)
                 for env_path in data.get("envs", []):
                     env_name = os.path.basename(env_path)
                     python_bin = os.path.join(env_path, "bin", "python")
                     if not os.path.isfile(python_bin):
                         python_bin = os.path.join(env_path, "Scripts", "python.exe")
-                    has_ipykernel = os.path.isfile(
-                        os.path.join(env_path, "bin", "python")
-                    ) and os.path.isdir(os.path.join(env_path, "lib"))  # rough check
                     # Check if already registered as a kernel
                     already_registered = any(
                         k["python"].startswith(env_path) for k in kernels
@@ -385,78 +385,85 @@ class IntegratedNotebookToolSet(ToolSet):
         Auto-recovery: If context exists but kernel session is lost (e.g., after
         backend restart), automatically recreates the kernel with the same ID.
         """
+        import asyncio
         key = (notebook_path, session_id)
 
-        if key not in self.notebook_contexts:
-            logger.info(f"Creating new context: {notebook_path} @ {session_id}")
+        # Per-key lock prevents duplicate kernel creation on concurrent calls
+        if key not in self._context_creation_locks:
+            self._context_creation_locks[key] = asyncio.Lock()
+        creation_lock = self._context_creation_locks[key]
 
-            # 1. Ensure notebook file exists
-            read_result = await self.notebook_contents.read_notebook(notebook_path)
-            notebook_file_is_new = False
-            if not read_result["success"]:
-                create_result = await self.notebook_contents.create_notebook(
-                    notebook_path, "New Notebook"
-                )
-                if not create_result["success"]:
-                    raise Exception(
-                        f"Failed to create notebook: {create_result['error']}"
+        async with creation_lock:
+            if key not in self.notebook_contexts:
+                logger.info(f"Creating new context: {notebook_path} @ {session_id}")
+
+                # 1. Ensure notebook file exists
+                read_result = await self.notebook_contents.read_notebook(notebook_path)
+                notebook_file_is_new = False
+                if not read_result["success"]:
+                    create_result = await self.notebook_contents.create_notebook(
+                        notebook_path, "New Notebook"
                     )
-                notebook_file_is_new = True
+                    if not create_result["success"]:
+                        raise Exception(
+                            f"Failed to create notebook: {create_result['error']}"
+                        )
+                    notebook_file_is_new = True
 
-            # 2. Create kernel session (internal)
-            kernel_result = await self.kernel_toolset.create_session(kernel_spec)
-            if not kernel_result["success"]:
-                raise Exception(f"Failed to create kernel: {kernel_result['error']}")
-
-            # 3. Create context
-            self.notebook_contexts[key] = NotebookContext(
-                notebook_path=notebook_path,
-                session_id=session_id,
-                kernel_session_id=kernel_result["session_id"],
-                created_at=datetime.now().isoformat(),
-                notebook_title="New Notebook",
-                kernel_spec=kernel_spec,
-                notebook_is_new=notebook_file_is_new,
-            )
-
-            # 4. Persist
-            await self._save_contexts()
-
-            logger.info(f"Created context: {notebook_path} @ {session_id}")
-
-        else:
-            # Context exists - check if kernel session is still alive
-            context = self.notebook_contexts[key]
-
-            if context.kernel_session_id not in self.kernel_toolset.sessions:
-                logger.warning(
-                    f"Kernel session {context.kernel_session_id[:8]} not found for "
-                    f"notebook '{notebook_path}' (possible backend restart). "
-                    f"Auto-recovering kernel..."
-                )
-
-                # Recreate kernel with the SAME session ID to maintain consistency
-                # Use keyword arguments with renamed parameter (kernel_session_id)
-                kernel_result = await self.kernel_toolset.create_session(
-                    kernel_spec=context.kernel_spec,
-                    kernel_session_id=context.kernel_session_id,
-                )
-
+                # 2. Create kernel session (internal)
+                kernel_result = await self.kernel_toolset.create_session(kernel_spec)
                 if not kernel_result["success"]:
-                    error_msg = (
-                        f"Failed to restore kernel session {context.kernel_session_id[:8]}: "
-                        f"{kernel_result.get('error', 'Unknown error')}"
-                    )
-                    logger.error(error_msg)
-                    raise Exception(error_msg)
+                    raise Exception(f"Failed to create kernel: {kernel_result['error']}")
 
-                # Reset rpy2 initialization state (new kernel doesn't have extension loaded)
-                context.rpy2_initialized = False
-
-                logger.info(
-                    f"✅ Successfully restored kernel session {context.kernel_session_id[:8]} "
-                    f"for notebook '{notebook_path}'"
+                # 3. Create context
+                self.notebook_contexts[key] = NotebookContext(
+                    notebook_path=notebook_path,
+                    session_id=session_id,
+                    kernel_session_id=kernel_result["session_id"],
+                    created_at=datetime.now().isoformat(),
+                    notebook_title="New Notebook",
+                    kernel_spec=kernel_spec,
+                    notebook_is_new=notebook_file_is_new,
                 )
+
+                # 4. Persist
+                await self._save_contexts()
+
+                logger.info(f"Created context: {notebook_path} @ {session_id}")
+
+            else:
+                # Context exists - check if kernel session is still alive
+                context = self.notebook_contexts[key]
+
+                if context.kernel_session_id not in self.kernel_toolset.sessions:
+                    logger.warning(
+                        f"Kernel session {context.kernel_session_id[:8]} not found for "
+                        f"notebook '{notebook_path}' (possible backend restart). "
+                        f"Auto-recovering kernel..."
+                    )
+
+                    # Recreate kernel with the SAME session ID to maintain consistency
+                    # Use keyword arguments with renamed parameter (kernel_session_id)
+                    kernel_result = await self.kernel_toolset.create_session(
+                        kernel_spec=context.kernel_spec,
+                        kernel_session_id=context.kernel_session_id,
+                    )
+
+                    if not kernel_result["success"]:
+                        error_msg = (
+                            f"Failed to restore kernel session {context.kernel_session_id[:8]}: "
+                            f"{kernel_result.get('error', 'Unknown error')}"
+                        )
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+
+                    # Reset rpy2 initialization state (new kernel doesn't have extension loaded)
+                    context.rpy2_initialized = False
+
+                    logger.info(
+                        f"✅ Successfully restored kernel session {context.kernel_session_id[:8]} "
+                        f"for notebook '{notebook_path}'"
+                    )
 
         return self.notebook_contexts[key]
 
@@ -711,6 +718,12 @@ class IntegratedNotebookToolSet(ToolSet):
                 if context:
                     result["kernel_session_id"] = context.kernel_session_id
                     result["kernel_spec"] = context.kernel_spec
+                    if kernel_spec and kernel_spec != context.kernel_spec:
+                        result["kernel_warning"] = (
+                            f"Notebook already has an active kernel '{context.kernel_spec}'. "
+                            f"Requested kernel_spec='{kernel_spec}' was ignored. "
+                            f"Use manage_kernel(action='delete') then recreate to switch kernels."
+                        )
                 elif kernel_spec:
                     # Create context now with the specified kernel
                     try:
@@ -1709,9 +1722,9 @@ class IntegratedNotebookToolSet(ToolSet):
                 self.completion_service.update_session_context(kernel_session_id, code)
 
             # Post-execution: check system memory (non-intrusive)
-            logger.info(f"Checking system memory usage")
+            logger.debug("Checking system memory usage")
             mem_pct = await self._check_memory_usage()
-            logger.info(f"Memory check result: {mem_pct}")
+            logger.debug(f"Memory check result: {mem_pct}")
             if mem_pct is not None and mem_pct > 75:
                 exec_result["memory_hint"] = (
                     f"⚠️ System memory at {mem_pct:.0f}%. Consider: "
