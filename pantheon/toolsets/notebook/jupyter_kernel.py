@@ -21,7 +21,6 @@ from jupyter_client.asynchronous import AsyncKernelClient
 from pantheon.remote.backend.base import RemoteBackend, StreamMessage, StreamType
 from pantheon.toolset import ToolSet, tool
 from pantheon.utils.log import logger
-from pantheon.internal.package_runtime.context import build_context_env
 
 
 # Terminal control character processing (nbclient-style)
@@ -158,9 +157,6 @@ class JupyterKernelToolSet(ToolSet):
         import sys
 
         env = os.environ.copy()
-
-        # Note: LS_COLORS removal is now handled by optimize_context_env() in build_context_env()
-        # Keeping this for backwards compatibility and extra safety
         env.pop("LS_COLORS", None)
 
         # Get paths from current sys.path and existing PYTHONPATH
@@ -175,20 +171,22 @@ class JupyterKernelToolSet(ToolSet):
 
         env["PYTHONPATH"] = os.pathsep.join(unique_paths)
 
-        # build_context_env() now automatically optimizes environment size
-        return build_context_env(
-            workdir=self._get_effective_workdir() or self.workdir,
-            context_variables=self._current_context_dict(),
-            base_env=env,
-            optimize=True,  # Enable automatic optimization
-        )
+        # Do NOT include PANTHEON_CONTEXT in the spawn environment.
+        # Large context causes E2BIG on execve(). Context is injected after
+        # kernel start via _context_prefix_code().
+        env.pop("PANTHEON_CONTEXT", None)
+
+        return env
 
     def _context_prefix_code(self) -> str:
-        env = build_context_env(
+        from pantheon.internal.package_runtime.context import build_context_payload, export_context
+        payload = build_context_payload(
             workdir=self._get_effective_workdir() or self.workdir,
             context_variables=self._current_context_dict(),
         )
-        serialized = env.get("PANTHEON_CONTEXT")
+        tmp: dict = {}
+        export_context(payload, env=tmp)
+        serialized = tmp.get("PANTHEON_CONTEXT")
         if not serialized:
             return ""
         encoded = base64.b64encode(serialized.encode("utf-8")).decode("ascii")
@@ -375,9 +373,8 @@ class JupyterKernelToolSet(ToolSet):
             total_env_size = sum(len(str(k)) + len(str(v)) + 1 for k, v in env.items())
             logger.debug(f"jupyter_kernel:create_session - Total environment size: {total_env_size} bytes")
 
-            # Note: Environment optimization is now handled by optimize_context_env() in build_context_env()
-            # This diagnostic code is kept for monitoring purposes
-            if total_env_size > 100000:  # Warn if > 100KB (was 10000, likely a typo)
+            # Note: PANTHEON_CONTEXT is not in spawn env (see _build_kernel_env).
+            if total_env_size > 100000:  # Warn if > 100KB
                 logger.warning(f"Environment size {total_env_size} bytes is large after optimization.")
 
                 # Identify largest environment variables

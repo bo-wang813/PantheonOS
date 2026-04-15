@@ -1156,11 +1156,6 @@ class Agent:
             self._tool_output_buffers[tool_call_id] = output_buffer
             full_context["_report_output"] = lambda line, buf=output_buffer: buf.append(str(line))
 
-        # Remove debug call_* variables
-        for k in list(full_context.keys()):
-            if k.startswith("call_"):
-                del full_context[k]
-
         # Merge with existing context_variables in args
         if _CTX_VARS_NAME in args:
             existing = args[_CTX_VARS_NAME]
@@ -1409,13 +1404,11 @@ class Agent:
                                 f"background execution. task_id='{bg_task.task_id}'. "
                                 f"Use background_task(action='status', task_id='{bg_task.task_id}') to check progress and results."
                             )
-                            context_variables[tool_call_id] = result
                             break
                         if check_stop is not None and check_stop(elapsed):
                             call_task.cancel()
                             raise StopRunning()
                     if not adopted_to_bg:
-                        context_variables[tool_call_id] = result
                         self._tool_output_buffers.pop(tool_call_id, None)
                 except StopRunning:
                     self._tool_output_buffers.pop(tool_call_id, None)
@@ -1424,13 +1417,11 @@ class Agent:
                     if not call_task.done():
                         call_task.cancel()
                     result = f"SystemExit: {e}"
-                    context_variables[tool_call_id] = result
                     self._tool_output_buffers.pop(tool_call_id, None)
                 except Exception as e:
                     if not call_task.done():
                         call_task.cancel()
                     result = repr(e)
-                    context_variables[tool_call_id] = result
                     self._tool_output_buffers.pop(tool_call_id, None)
                 finally:
                     _bg_output_buffer.reset(_token)

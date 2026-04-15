@@ -44,15 +44,21 @@ def _prepare_runtime(workspace: Path, packages_dir: Path, monkeypatch) -> object
     return importlib.import_module("pantheon.packages")
 
 
-def test_export_context_filters_non_serializable_entries():
+def test_export_context_filters_non_essential_fields():
+    """build_context_payload applies a whitelist: only ESSENTIAL_CONTEXT_FIELDS survive."""
     payload = build_context_payload(
         workdir="/tmp/workspace",
         context_variables={
+            # essential fields — should survive
+            "client_id": "abc",
+            "image_output_dir": "/tmp/img",
+            # non-essential fields — should be dropped regardless of serializability
             "ok": "value",
             "number": 42,
+            # callables — should be dropped
             "callable": lambda x: x,  # type: ignore[arg-type]
-            "nested": {"valid": 1, "bad": object()},
-            "list": ["hello", object()],
+            # tool_call_id style keys — should be dropped
+            "call_abc123": "tool result",
         },
     )
     env: dict[str, str] = {}
@@ -62,11 +68,12 @@ def test_export_context_filters_non_serializable_entries():
     data = json.loads(serialized)
     ctx_vars = data["context_variables"]
 
-    assert ctx_vars["ok"] == "value"
-    assert ctx_vars["number"] == 42
+    assert ctx_vars["client_id"] == "abc"
+    assert ctx_vars["image_output_dir"] == "/tmp/img"
+    assert "ok" not in ctx_vars
+    assert "number" not in ctx_vars
     assert "callable" not in ctx_vars
-    assert "nested" not in ctx_vars
-    assert "list" not in ctx_vars
+    assert "call_abc123" not in ctx_vars
 
 
 def test_packages_module_adds_packages_path(tmp_path, monkeypatch):

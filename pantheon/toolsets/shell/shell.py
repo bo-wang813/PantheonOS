@@ -41,6 +41,9 @@ class ShellToolSet(ToolSet):
 
     def _build_runtime_env(self) -> dict:
         effective_workdir = self._get_effective_workdir() or str(self.workdir)
+        # No base_env passed: the shell process inherits the parent environment
+        # directly. We only need to export PANTHEON_CONTEXT into the running
+        # shell via _apply_context_to_shell, not re-pass the full env at spawn.
         return build_context_env(
             workdir=effective_workdir,
             context_variables=self._current_context_dict(),

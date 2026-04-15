@@ -309,7 +309,8 @@ You are a weather agent, you can use the weather API to get the weather of a cit
     resp = await agent._run_stream(msgs)
     print(resp)
     call_id = resp.messages[0]["tool_calls"][0]["id"]
-    assert resp.context_variables[call_id]["weather"] == "sunny"
+    tool_msg = next(m for m in resp.messages if m.get("role") == "tool" and m.get("tool_call_id") == call_id)
+    assert tool_msg["raw_content"]["weather"] == "sunny"
 
 
 async def test_structured_output():
