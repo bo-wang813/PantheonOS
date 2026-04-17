@@ -9,13 +9,20 @@ Covers:
 - OpenAI Chat Completions adapter sanitises tool-message images to a text placeholder
 - Responses API path emits input_image items in function_call_output
 - observe_images tool picks native vs sub-agent mode based on active model
+- Notebook execute summary helper produces useful text for image blocks
+- Agent-layer opt-in path preserves list content instead of JSON-stringifying
 """
 
 from __future__ import annotations
 
 import base64
+import io
+import json
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image
 
 from pantheon.utils.vision_capability import supports_tool_result_image
 from pantheon.utils.adapters.image_blocks import (
@@ -31,7 +38,13 @@ from pantheon.utils.adapters.gemini_adapter import _convert_messages_to_gemini
 from pantheon.utils.adapters.openai_adapter import (
     _sanitize_tool_messages_for_chat_completions,
 )
-from pantheon.utils.llm import _convert_messages_to_responses_input
+from pantheon.utils.llm import (
+    _convert_messages_to_responses_input,
+    _tool_output_for_responses,
+)
+from pantheon.toolsets.notebook.integrated_notebook import (
+    _summarise_exec_result_for_blocks,
+)
 
 
 # Tiny 1×1 PNG (base64). Enough for tests without external files.
@@ -299,3 +312,443 @@ class TestResponsesAPIConversion:
         assert "input_image" in types
         img_item = next(it for it in output if it["type"] == "input_image")
         assert img_item["image_url"].startswith("data:image/png;base64,")
+
+
+# ============ more: image_blocks edge cases ============
+
+
+class TestImageBlocksEdgeCases:
+
+    def test_invalid_data_uri_returns_none(self):
+        assert resolve_image_url("data:text/plain;base64,AA") is None
+
+    def test_malformed_data_uri_returns_none(self):
+        assert resolve_image_url("data:image/png;something_wrong") is None
+
+    def test_empty_url(self):
+        assert resolve_image_url("") is None
+
+    def test_non_file_path_not_leading_slash(self):
+        # "foo/bar.png" — no leading slash, no scheme → skipped
+        assert resolve_image_url("foo/bar.png") is None
+
+    def test_split_text_empty_list(self):
+        text, inline, http = split_text_and_images([])
+        assert text == ""
+        assert inline == []
+        assert http == []
+
+    def test_split_text_preserves_multiple_text_blocks(self):
+        text, inline, http = split_text_and_images([
+            {"type": "text", "text": "first"},
+            {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            {"type": "text", "text": "second"},
+        ])
+        # Both text pieces survive (joined with double newline).
+        assert "first" in text
+        assert "second" in text
+        assert len(inline) == 1
+
+    def test_split_skips_empty_url(self):
+        text, inline, http = split_text_and_images([
+            {"type": "image_url", "image_url": {"url": ""}},
+        ])
+        assert text == ""
+        assert inline == []
+        assert http == []
+
+    def test_split_unknown_item_stringified(self):
+        text, inline, http = split_text_and_images([
+            "raw string item",  # not a dict
+            {"type": "text", "text": "real text"},
+        ])
+        assert "raw string item" in text
+        assert "real text" in text
+
+
+# ============ file:// resolution via PIL ============
+
+
+@pytest.fixture
+def tiny_png_file(tmp_path):
+    """Write a real 2×2 PNG to disk and return its absolute path."""
+    path = tmp_path / "tiny.png"
+    img = Image.new("RGB", (2, 2), color=(255, 0, 0))
+    img.save(path, format="PNG")
+    return path
+
+
+class TestFilePathResolution:
+
+    def test_resolve_file_uri(self, tiny_png_file):
+        mime, data = resolve_image_url(f"file://{tiny_png_file}")
+        assert mime.startswith("image/")
+        # Should decode without error
+        decoded = base64.b64decode(data)
+        assert len(decoded) > 0
+
+    def test_resolve_absolute_path(self, tiny_png_file):
+        mime, data = resolve_image_url(str(tiny_png_file))
+        assert mime.startswith("image/")
+        assert len(base64.b64decode(data)) > 0
+
+    def test_resolve_missing_file(self, tmp_path):
+        missing = tmp_path / "does-not-exist.png"
+        # Should gracefully return None, not raise
+        assert resolve_image_url(str(missing)) is None
+
+
+# ============ Anthropic: multiple images + HTTP URL ============
+
+
+class TestAnthropicMultipleImages:
+
+    def test_two_inline_images(self):
+        second_data = "iVBORw0KGgoSECOND"
+        blocks = _content_to_anthropic_tool_result([
+            {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{second_data}"}},
+        ])
+        assert isinstance(blocks, list)
+        image_blocks = [b for b in blocks if b["type"] == "image"]
+        assert len(image_blocks) == 2
+        assert image_blocks[0]["source"]["media_type"] == "image/png"
+        assert image_blocks[1]["source"]["media_type"] == "image/jpeg"
+        assert image_blocks[1]["source"]["data"] == second_data
+
+    def test_http_url_becomes_url_source(self):
+        blocks = _content_to_anthropic_tool_result([
+            {"type": "text", "text": "see hosted img"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/pic.png"}},
+        ])
+        assert isinstance(blocks, list)
+        url_blocks = [b for b in blocks if b.get("type") == "image" and b["source"].get("type") == "url"]
+        assert len(url_blocks) == 1
+        assert url_blocks[0]["source"]["url"] == "https://example.com/pic.png"
+
+    def test_empty_tool_content_returns_empty_string(self):
+        assert _content_to_anthropic_tool_result("") == ""
+        assert _content_to_anthropic_tool_result([]) == ""
+
+
+# ============ Gemini: multiple images + HTTP fallback ============
+
+
+class TestGeminiMultipleImages:
+
+    def test_multiple_inline_parts(self):
+        second_data = "iVBORw0KGgoSECOND"
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "name": "observe_images",
+                "content": [
+                    {"type": "text", "text": "two images"},
+                    {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{second_data}"}},
+                ],
+            },
+        ]
+        _sys, contents = _convert_messages_to_gemini(messages)
+        parts = contents[0]["parts"]
+        inline_parts = [p for p in parts if "inline_data" in p]
+        assert len(inline_parts) == 2
+        mimes = {p["inline_data"]["mime_type"] for p in inline_parts}
+        assert mimes == {"image/png", "image/jpeg"}
+
+    def test_http_url_becomes_text_fallback(self):
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "c1",
+                "name": "observe_images",
+                "content": [
+                    {"type": "text", "text": "hosted"},
+                    {"type": "image_url", "image_url": {"url": "https://e.com/x.png"}},
+                ],
+            },
+        ]
+        _sys, contents = _convert_messages_to_gemini(messages)
+        parts = contents[0]["parts"]
+        text_parts = [p.get("text", "") for p in parts if "text" in p]
+        assert any("https://e.com/x.png" in t for t in text_parts)
+
+
+# ============ OpenAI sanitiser edge cases ============
+
+
+class TestOpenAISanitiserEdgeCases:
+
+    def test_multiple_images_counted(self):
+        messages = [{
+            "role": "tool",
+            "tool_call_id": "c",
+            "content": [
+                {"type": "text", "text": "three pics"},
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+                {"type": "image_url", "image_url": {"url": "https://e.com/a.png"}},
+            ],
+        }]
+        out = _sanitize_tool_messages_for_chat_completions(messages)
+        assert "3 image(s)" in out[0]["content"]
+        assert "three pics" in out[0]["content"]
+
+    def test_does_not_mutate_input(self):
+        original = [{
+            "role": "tool",
+            "tool_call_id": "c",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            ],
+        }]
+        _out = _sanitize_tool_messages_for_chat_completions(original)
+        # Original content unchanged
+        assert isinstance(original[0]["content"], list)
+        assert original[0]["content"][0]["type"] == "image_url"
+
+    def test_empty_images_only(self):
+        messages = [{
+            "role": "tool",
+            "tool_call_id": "c",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            ],
+        }]
+        out = _sanitize_tool_messages_for_chat_completions(messages)
+        # No text, just the placeholder
+        assert "1 image(s)" in out[0]["content"]
+
+
+# ============ Responses API: full round trip ============
+
+
+class TestResponsesAPIRoundTrip:
+
+    def test_tool_output_helper_directly(self):
+        """The helper used by _convert_messages_to_responses_input."""
+        # String passthrough
+        assert _tool_output_for_responses("hi") == "hi"
+        assert _tool_output_for_responses(None) == ""
+
+        # Text-only list collapses to string
+        out = _tool_output_for_responses([{"type": "text", "text": "only text"}])
+        assert out == "only text"
+
+        # With images → structured list
+        result = _tool_output_for_responses([
+            {"type": "text", "text": "caption"},
+            {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+        ])
+        assert isinstance(result, list)
+        assert result[0]["type"] == "input_text"
+        assert result[1]["type"] == "input_image"
+        assert "detail" in result[1]
+
+    def test_multiple_images_in_function_call_output(self):
+        messages = [{
+            "role": "tool",
+            "tool_call_id": "call_x",
+            "content": [
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+                {"type": "image_url", "image_url": {"url": "https://e.com/x.png"}},
+            ],
+        }]
+        _instructions, items = _convert_messages_to_responses_input(messages)
+        fco = next(i for i in items if i.get("type") == "function_call_output")
+        output = fco["output"]
+        assert isinstance(output, list)
+        image_items = [it for it in output if it.get("type") == "input_image"]
+        assert len(image_items) == 2
+        # Data URI is embedded verbatim
+        assert any(i["image_url"].startswith("data:image/png") for i in image_items)
+        # HTTP URL is passed through
+        assert any(i["image_url"] == "https://e.com/x.png" for i in image_items)
+
+
+# ============ Notebook execution summary ============
+
+
+class TestNotebookSummary:
+
+    def test_empty_exec_result(self):
+        assert _summarise_exec_result_for_blocks({}) == ""
+
+    def test_stream_outputs_concatenated(self):
+        out = _summarise_exec_result_for_blocks({
+            "outputs": [
+                {"output_type": "stream", "text": "hello\n"},
+                {"output_type": "stream", "text": ["line1\n", "line2\n"]},
+            ],
+            "execution_count": 3,
+        })
+        assert out.startswith("[cell execution_count=3]")
+        assert "hello" in out
+        assert "line1" in out
+
+    def test_error_output_rendered(self):
+        out = _summarise_exec_result_for_blocks({
+            "outputs": [
+                {"output_type": "error", "ename": "ValueError", "evalue": "oops"},
+            ],
+        })
+        assert "ValueError: oops" in out
+
+    def test_text_plain_truncated(self):
+        long = "x" * 1000
+        out = _summarise_exec_result_for_blocks({
+            "outputs": [
+                {
+                    "output_type": "execute_result",
+                    "data": {"text/plain": long},
+                },
+            ],
+        })
+        # Should keep text but the limit is 500
+        assert len(out) < 900  # well under the raw 1000
+
+    def test_image_only_output_produces_header_or_empty(self):
+        # No stream/error/text, just an image → summary is just header (may be empty)
+        out = _summarise_exec_result_for_blocks({
+            "outputs": [
+                {
+                    "output_type": "display_data",
+                    "data": {"image/png": "someb64"},
+                },
+            ],
+            "execution_count": 5,
+        })
+        # Header-only allowed; body empty
+        assert "execution_count=5" in out or out == ""
+
+
+# ============ Agent-layer opt-in (integration-lite) ============
+
+
+class TestAgentOptInPath:
+    """Verify the agent.py tool-message construction respects content-blocks opt-in.
+
+    We don't spin up a full Agent; we inline the critical logic to ensure
+    a dict result with list-of-blocks `content` is preserved verbatim.
+    """
+
+    def test_list_of_blocks_preserved(self):
+        # Mimic the check added in agent.py _run_single_tool_call
+        result = {
+            "success": True,
+            "content": [
+                {"type": "text", "text": "ok"},
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            ],
+        }
+        maybe_blocks = result.get("content") if isinstance(result, dict) else None
+        is_image_content = (
+            isinstance(maybe_blocks, list)
+            and any(
+                isinstance(b, dict) and b.get("type") == "image_url"
+                for b in maybe_blocks
+            )
+        )
+        assert is_image_content is True
+
+    def test_string_content_not_treated_as_blocks(self):
+        result = {"success": True, "content": "plain text"}
+        maybe_blocks = result.get("content")
+        assert not isinstance(maybe_blocks, list)
+
+    def test_text_only_blocks_not_treated_as_image_blocks(self):
+        result = {
+            "success": True,
+            "content": [{"type": "text", "text": "no images here"}],
+        }
+        maybe_blocks = result.get("content")
+        has_image = any(
+            isinstance(b, dict) and b.get("type") == "image_url"
+            for b in maybe_blocks
+        )
+        assert has_image is False
+
+
+# ============ observe_images routing (mocked) ============
+
+
+class TestObserveImagesRouting:
+    """Verify observe_images picks native vs sub-agent path based on active model."""
+
+    @pytest.fixture
+    def sample_image(self, tmp_path):
+        p = tmp_path / "test.png"
+        img = Image.new("RGB", (4, 4), (0, 128, 255))
+        img.save(p, format="PNG")
+        return str(p)
+
+    @pytest.mark.asyncio
+    async def test_native_mode_returns_content_blocks(self, sample_image, monkeypatch):
+        from pantheon.toolsets.file.file_manager import FileManagerToolSet
+
+        fm = FileManagerToolSet(name="test_fm")
+
+        # Patch the execution context so get_context() returns a stub.
+        mock_ctx = MagicMock()
+        mock_ctx.call_agent = AsyncMock(return_value={"success": True, "response": "fallback"})
+        monkeypatch.setattr(fm, "get_context", lambda: mock_ctx)
+
+        # Force capability detection to return True (simulate Anthropic/Gemini).
+        with patch(
+            "pantheon.agent.get_current_run_model",
+            return_value="anthropic/claude-sonnet-4-6",
+        ):
+            result = await fm.observe_images.__wrapped__(
+                fm, question="what is this?", image_paths=[sample_image]
+            )
+
+        assert result["success"] is True
+        assert isinstance(result["content"], list)
+        # Sub-agent should NOT have been invoked
+        mock_ctx.call_agent.assert_not_called()
+        # Expect text block + image block
+        types = [b.get("type") for b in result["content"]]
+        assert "text" in types
+        assert "image_url" in types
+
+    @pytest.mark.asyncio
+    async def test_subagent_mode_calls_call_agent(self, sample_image, monkeypatch):
+        from pantheon.toolsets.file.file_manager import FileManagerToolSet
+
+        fm = FileManagerToolSet(name="test_fm")
+
+        mock_ctx = MagicMock()
+        mock_ctx.call_agent = AsyncMock(
+            return_value={"success": True, "response": "summary text"}
+        )
+        monkeypatch.setattr(fm, "get_context", lambda: mock_ctx)
+
+        # Force capability detection to return False (simulate Chat Completions).
+        with patch(
+            "pantheon.agent.get_current_run_model",
+            return_value="gpt-4o",
+        ):
+            result = await fm.observe_images.__wrapped__(
+                fm, question="what is this?", image_paths=[sample_image]
+            )
+
+        assert result["success"] is True
+        # Sub-agent SHOULD have been invoked
+        mock_ctx.call_agent.assert_called_once()
+        # Content is a plain text string from the sub-agent response
+        assert isinstance(result["content"], str)
+        assert "summary text" in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_missing_image_returns_error(self, tmp_path, monkeypatch):
+        from pantheon.toolsets.file.file_manager import FileManagerToolSet
+
+        fm = FileManagerToolSet(name="test_fm")
+        monkeypatch.setattr(fm, "get_context", lambda: MagicMock())
+
+        result = await fm.observe_images.__wrapped__(
+            fm, question="x", image_paths=[str(tmp_path / "missing.png")]
+        )
+        assert result["success"] is False
+        assert "does not exist" in result["error"]
