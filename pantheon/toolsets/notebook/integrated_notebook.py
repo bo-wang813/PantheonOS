@@ -53,6 +53,42 @@ except Exception as e:
 '''
 
 
+def _summarise_exec_result_for_blocks(exec_result: dict) -> str:
+    """Build a compact text summary of execution outputs for native-image mode.
+
+    Pulls stdout / stderr / error text out of the raw outputs so the agent
+    still sees the execution narrative alongside the rendered image(s).
+    Keeps image mime types out of the text since they are delivered as
+    separate image content blocks.
+    """
+    lines: list[str] = []
+    outputs = exec_result.get("outputs", []) or []
+    for output in outputs:
+        otype = output.get("output_type")
+        if otype == "stream":
+            text = output.get("text", "")
+            if isinstance(text, list):
+                text = "".join(text)
+            if text:
+                lines.append(text.rstrip())
+        elif otype == "error":
+            ename = output.get("ename", "Error")
+            evalue = output.get("evalue", "")
+            lines.append(f"{ename}: {evalue}")
+        elif otype in ("display_data", "execute_result"):
+            data = output.get("data", {}) or {}
+            text = data.get("text/plain")
+            if isinstance(text, list):
+                text = "".join(text)
+            if text:
+                # Short text/plain is useful; truncate overly verbose reprs.
+                lines.append(text.rstrip()[:500])
+    exec_count = exec_result.get("execution_count")
+    head = f"[cell execution_count={exec_count}] " if exec_count else ""
+    body = "\n".join(lines).strip()
+    return f"{head}{body}" if body else head.strip()
+
+
 @dataclass
 class NotebookContext:
     """Internal context for notebook operations"""
@@ -1745,7 +1781,34 @@ class IntegratedNotebookToolSet(ToolSet):
                             image_uris.append(f"data:{mime};base64,{img_b64}")
             if image_uris:
                 exec_result["base64_uri"] = image_uris
-                exec_result["hidden_to_model"] = ["base64_uri"]
+
+                # If the active model supports images in tool_result, surface
+                # them directly to the main agent as content blocks. The
+                # adapter layer will translate to the provider-native format.
+                # For Chat-Completions-only providers, keep images hidden from
+                # the model (token budget) — they remain available via
+                # base64_uri for frontend consumers.
+                try:
+                    from pantheon.agent import get_current_run_model
+                    from pantheon.utils.vision_capability import (
+                        supports_tool_result_image,
+                    )
+
+                    if supports_tool_result_image(get_current_run_model()):
+                        summary_text = _summarise_exec_result_for_blocks(exec_result)
+                        blocks: list[dict] = []
+                        if summary_text:
+                            blocks.append({"type": "text", "text": summary_text})
+                        for uri in image_uris:
+                            blocks.append(
+                                {"type": "image_url", "image_url": {"url": uri}}
+                            )
+                        exec_result["content"] = blocks
+                    else:
+                        exec_result["hidden_to_model"] = ["base64_uri"]
+                except Exception as e:
+                    logger.debug(f"notebook native-image routing failed: {e}")
+                    exec_result["hidden_to_model"] = ["base64_uri"]
 
             return exec_result
 

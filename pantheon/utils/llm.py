@@ -231,13 +231,56 @@ def _convert_messages_to_responses_input(
                 })
 
         elif role == "tool":
+            # If tool content includes image_url blocks, emit a structured
+            # output array with input_text + input_image items. OpenAI's
+            # Responses API supports images in function_call_output.
+            output = _tool_output_for_responses(content)
             input_items.append({
                 "type": "function_call_output",
                 "call_id": msg.get("tool_call_id", ""),
-                "output": content or "",
+                "output": output,
             })
 
     return instructions, input_items
+
+
+def _tool_output_for_responses(content: Any) -> Any:
+    """Convert tool content to Responses API function_call_output format.
+
+    Returns either a plain string (no images) or a list of input_text /
+    input_image items (when images are present).
+    """
+    if isinstance(content, str):
+        return content or ""
+    if not isinstance(content, list):
+        return str(content or "")
+
+    from pantheon.utils.adapters.image_blocks import (
+        has_image_content,
+        split_text_and_images,
+    )
+
+    if not has_image_content(content):
+        text, _inline, _http = split_text_and_images(content)
+        return text or ""
+
+    text, inline_images, http_urls = split_text_and_images(content)
+    items: list[dict] = []
+    if text:
+        items.append({"type": "input_text", "text": text})
+    for mime, data in inline_images:
+        items.append({
+            "type": "input_image",
+            "detail": "auto",
+            "image_url": f"data:{mime};base64,{data}",
+        })
+    for url in http_urls:
+        items.append({
+            "type": "input_image",
+            "detail": "auto",
+            "image_url": url,
+        })
+    return items if items else ""
 
 
 def _convert_tools_for_responses(tools: list[dict] | None) -> list[dict] | None:

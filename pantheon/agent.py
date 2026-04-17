@@ -1471,17 +1471,53 @@ class Agent:
                     # Merge instead of overwrite to preserve all metadata fields
                     tool_message["_metadata"].update(tool_metadata)
 
-                # Process and truncate tool result in one step
-                content = process_tool_result(
-                    result,
-                    max_length=self.max_tool_content_length,
-                    tool_name=func_name,
-                )
-                
-                tool_message.update({
-                    "raw_content": result,  # Now without _metadata
-                    "content": content,
-                })
+                # Native image content opt-in: if the tool returns
+                # result["content"] as a list of OpenAI-style content blocks
+                # (text / image_url), preserve the list so it can be carried
+                # natively by adapters into tool_result. Skip truncation since
+                # image payloads are handled elsewhere (base64 filter).
+                preserved_blocks = None
+                if isinstance(result, dict):
+                    maybe_blocks = result.get("content")
+                    if isinstance(maybe_blocks, list) and any(
+                        isinstance(b, dict) and b.get("type") == "image_url"
+                        for b in maybe_blocks
+                    ):
+                        preserved_blocks = maybe_blocks
+
+                if preserved_blocks is not None:
+                    # Run tool-message image content through ImageStore so
+                    # base64 data URIs are persisted to disk and replaced with
+                    # file:// references (same memory-efficiency trick used
+                    # for user input images).
+                    try:
+                        from .utils.vision import get_image_store
+
+                        image_store = get_image_store()
+                        chat_id = self.memory.id if self.memory else "default"
+                        # ImageStore expects {"content": [...]} on a message dict.
+                        tmp = {"content": preserved_blocks}
+                        image_store.process_message_images(tmp, chat_id)
+                        preserved_blocks = tmp["content"]
+                    except Exception as e:
+                        logger.debug(f"ImageStore processing failed: {e}")
+
+                    tool_message.update({
+                        "raw_content": result,
+                        "content": preserved_blocks,
+                    })
+                else:
+                    # Process and truncate tool result in one step
+                    content = process_tool_result(
+                        result,
+                        max_length=self.max_tool_content_length,
+                        tool_name=func_name,
+                    )
+
+                    tool_message.update({
+                        "raw_content": result,  # Now without _metadata
+                        "content": content,
+                    })
 
 
             return tool_message
