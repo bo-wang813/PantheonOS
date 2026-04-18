@@ -181,6 +181,11 @@
         // Wait this many messages before retrying after a compression failure
         "retry_after_messages": 10
     },
+    // ===== Think System Configuration =====
+    // Leader-only think tool/prompt injection via ThinkPlugin
+    "think_system": {
+        "enabled": true
+    },
     // ===== Task System Configuration =====
     // Modal workflow tools (task_boundary, notify_user) for structured agent tasks
     "task_system": {
