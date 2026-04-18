@@ -34,6 +34,18 @@ def supports_tool_result_image(model: str | None) -> bool:
     if not model:
         return False
 
+    # Proxy mode (LLM_API_BASE set) forces OpenAI Chat Completions format
+    # regardless of the model name — even "anthropic/..." routes through
+    # the /v1/chat/completions endpoint on the proxy. The adapter sanitiser
+    # then strips image content from tool messages. Returning True here
+    # would trick observe_images into returning image blocks that get
+    # silently stripped downstream, which is worse than the sub-agent
+    # fallback (which produces a text summary).
+    from .llm_providers import get_llm_proxy_config
+    proxy_base, _ = get_llm_proxy_config()
+    if proxy_base:
+        return False
+
     bare = model.lower()
     # Strip provider prefix for matching (e.g. "anthropic/claude" → "claude")
     if "/" in bare:

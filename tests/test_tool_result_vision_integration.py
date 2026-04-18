@@ -392,6 +392,104 @@ async def test_openai_responses_api_sees_image_in_tool_result(model):
 
 
 # ============================================================================
+# Structured metadata preservation in native mode
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_native_mode_preserves_structured_metadata():
+    """End-to-end: in native mode, the agent framework merges structured
+    tool fields with image blocks. Claude should see BOTH the image AND
+    critical ID fields (cell_id, notebook_path, etc.) in its tool_result.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        pytest.skip("ANTHROPIC_API_KEY not set")
+
+    # Simulate a notebook execute tool return shape with images + structured data.
+    marker = "PANTHEON_STRUCT_4242"
+    img_data_uri = _render_marker_image(marker)
+
+    # This is the shape integrated_notebook now produces in native mode.
+    tool_result_dict = {
+        "success": True,
+        "cell_id": "unique-cell-xyz-9",
+        "notebook_path": "fake_eda.ipynb",
+        "execution_count": 42,
+        "outputs": [
+            {"output_type": "stream", "text": "Loaded 10k rows\n"},
+        ],
+        "content_blocks": [
+            {"type": "image_url", "image_url": {"url": img_data_uri}},
+        ],
+    }
+
+    # Simulate agent.py's merge: strip content_blocks, JSON-dump the rest
+    # as text, prepend to blocks.
+    import json as _json
+
+    structured = {k: v for k, v in tool_result_dict.items() if k != "content_blocks"}
+    text_summary = _json.dumps(structured, indent=2)
+    merged_content = [
+        {"type": "text", "text": text_summary},
+        *tool_result_dict["content_blocks"],
+    ]
+
+    tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "Look at the tool result. Answer TWO things:\n"
+                "1. What is the cell_id?\n"
+                "2. What text does the image contain?\n"
+                "Answer in plain text, one item per line."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "notebook_execute",
+                        "arguments": '{"cell_id": "unique-cell-xyz-9"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "name": "notebook_execute",
+            "content": merged_content,
+        },
+    ]
+
+    adapter = AnthropicAdapter()
+    chunks = await adapter.acompletion(
+        model="claude-sonnet-4-5",
+        messages=messages,
+        tools=_build_tools(),
+        stream=True,
+        num_retries=1,
+        max_tokens=512,
+        temperature=0.0,
+    )
+    text = await _collect_text_from_chunks(chunks)
+    assert text, "Anthropic returned empty response"
+    # Claude must be able to read BOTH the structured cell_id AND the image.
+    assert "unique-cell-xyz-9" in text, (
+        f"Structured cell_id lost. Got: {text!r}"
+    )
+    assert _marker_seen(text, marker), (
+        f"Image content not read. Got: {text!r}"
+    )
+
+
+# ============================================================================
 # Smoke: ensure the file-manager tool works end-to-end under Anthropic
 # ============================================================================
 

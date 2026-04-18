@@ -1471,23 +1471,55 @@ class Agent:
                     # Merge instead of overwrite to preserve all metadata fields
                     tool_message["_metadata"].update(tool_metadata)
 
-                # Native image content opt-in: if the tool returns
-                # result["content"] as a list of OpenAI-style content blocks
-                # (text / image_url), preserve the list so it can be carried
-                # natively by adapters into tool_result. Skip truncation since
-                # image payloads are handled elsewhere (base64 filter).
-                preserved_blocks = None
+                # Native multimodal content opt-in (content_blocks):
+                # When a tool returns `result["content_blocks"]` as a list of
+                # OpenAI-style content blocks containing at least one image,
+                # the framework merges structured JSON data + the blocks into
+                # a single multimodal tool_result. This lets the adapter layer
+                # carry images natively to providers that support it.
+                #
+                # Design:
+                #   - Tool keeps its normal dict fields (cell_id, success, ...).
+                #   - Tool sets `content_blocks` ONLY when it wants native
+                #     images AND has verified provider capability.
+                #   - Framework strips `content_blocks` from the dict, turns
+                #     the remainder into a text summary via the usual
+                #     process_tool_result path (preserving hidden_to_model
+                #     filtering), and prepends that text to the blocks.
+                native_blocks = None
                 if isinstance(result, dict):
-                    maybe_blocks = result.get("content")
+                    maybe_blocks = result.get("content_blocks")
                     if isinstance(maybe_blocks, list) and any(
                         isinstance(b, dict) and b.get("type") == "image_url"
                         for b in maybe_blocks
                     ):
-                        preserved_blocks = maybe_blocks
+                        native_blocks = maybe_blocks
 
-                if preserved_blocks is not None:
-                    # Run tool-message image content through ImageStore so
-                    # base64 data URIs are persisted to disk and replaced with
+                if native_blocks is not None:
+                    # Peel content_blocks out so the JSON summary doesn't
+                    # also contain the image payload in text form.
+                    structured_result = {
+                        k: v for k, v in result.items() if k != "content_blocks"
+                    }
+                    text_summary = process_tool_result(
+                        structured_result,
+                        max_length=self.max_tool_content_length,
+                        tool_name=func_name,
+                    )
+                    merged_blocks: list[dict] = []
+                    if text_summary:
+                        merged_blocks.append({
+                            "type": "text",
+                            "text": (
+                                text_summary
+                                if isinstance(text_summary, str)
+                                else str(text_summary)
+                            ),
+                        })
+                    merged_blocks.extend(native_blocks)
+
+                    # Run the merged content through ImageStore so base64
+                    # data URIs are persisted to disk and replaced with
                     # file:// references (same memory-efficiency trick used
                     # for user input images).
                     try:
@@ -1495,16 +1527,15 @@ class Agent:
 
                         image_store = get_image_store()
                         chat_id = self.memory.id if self.memory else "default"
-                        # ImageStore expects {"content": [...]} on a message dict.
-                        tmp = {"content": preserved_blocks}
+                        tmp = {"content": merged_blocks}
                         image_store.process_message_images(tmp, chat_id)
-                        preserved_blocks = tmp["content"]
+                        merged_blocks = tmp["content"]
                     except Exception as e:
                         logger.debug(f"ImageStore processing failed: {e}")
 
                     tool_message.update({
                         "raw_content": result,
-                        "content": preserved_blocks,
+                        "content": merged_blocks,
                     })
                 else:
                     # Process and truncate tool result in one step

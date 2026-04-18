@@ -1026,27 +1026,35 @@ class FileManagerToolSet(FileManagerToolSetBase):
                     "Please check how this image was generated."
                 )
 
-        # Path A: native provider → return image blocks directly to main agent.
+        # Path A: native provider → return image blocks via content_blocks.
+        # The agent framework auto-merges structured data + blocks into a
+        # multimodal tool_result, so we keep normal fields (question,
+        # image_count, warnings) alongside the opt-in content_blocks.
         from pantheon.agent import get_current_run_model
         from pantheon.utils.vision_capability import supports_tool_result_image
 
         active_model = get_current_run_model()
         if supports_tool_result_image(active_model):
-            content_blocks: list[dict] = []
-            intro = f"Attached {len(resolved_paths)} image(s). Question: {question}"
-            if blank_warnings:
-                intro = "SYSTEM DETECTED ISSUES:\n" + "\n".join(blank_warnings) + "\n\n" + intro
-            content_blocks.append({"type": "text", "text": intro})
+            blocks: list[dict] = []
             for ipath in resolved_paths:
                 base64_uri = path_to_image_url(str(ipath))
-                content_blocks.append(
+                blocks.append(
                     {"type": "image_url", "image_url": {"url": base64_uri}}
                 )
             logger.info(
                 f"observe_images: native mode ({active_model}), "
                 f"returning {len(resolved_paths)} image(s) to main agent"
             )
-            return {"success": True, "content": content_blocks}
+            result: dict = {
+                "success": True,
+                "mode": "native",
+                "question": question,
+                "image_count": len(resolved_paths),
+                "content_blocks": blocks,
+            }
+            if blank_warnings:
+                result["warnings"] = blank_warnings
+            return result
 
         # Path B: legacy sub-agent — provider cannot accept images in tool result.
         logger.info(

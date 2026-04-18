@@ -42,9 +42,6 @@ from pantheon.utils.llm import (
     _convert_messages_to_responses_input,
     _tool_output_for_responses,
 )
-from pantheon.toolsets.notebook.integrated_notebook import (
-    _summarise_exec_result_for_blocks,
-)
 
 
 # Tiny 1×1 PNG (base64). Enough for tests without external files.
@@ -78,6 +75,32 @@ class TestCapabilityDetection:
     def test_openai_responses_api_supported(self):
         # codex and *-pro models go through Responses API which supports images
         assert supports_tool_result_image("codex-mini-latest") is True
+
+    def test_proxy_mode_forces_false(self, monkeypatch):
+        """When LLM_API_BASE is set (LiteLLM proxy), all calls route through
+        Chat Completions — even 'anthropic/...'. The sanitiser would strip
+        images, so native mode would degrade to a placeholder. Return False
+        to defer to the sub-agent fallback instead."""
+        # Patch at source module so the in-function `from .llm_providers
+        # import get_llm_proxy_config` picks up the patched version.
+        monkeypatch.setattr(
+            "pantheon.utils.llm_providers.get_llm_proxy_config",
+            lambda: ("https://proxy.example.com", "sk-virtual"),
+        )
+        # Even Anthropic models should be False in proxy mode.
+        assert supports_tool_result_image("anthropic/claude-sonnet-4-6") is False
+        assert supports_tool_result_image("gemini/gemini-2.5-pro") is False
+        # OpenAI models are already False, still False.
+        assert supports_tool_result_image("gpt-5.4-mini") is False
+
+    def test_non_proxy_mode_preserves_native(self, monkeypatch):
+        """Without proxy, native support stands (regression guard)."""
+        monkeypatch.setattr(
+            "pantheon.utils.llm_providers.get_llm_proxy_config",
+            lambda: (None, None),
+        )
+        assert supports_tool_result_image("anthropic/claude-sonnet-4-6") is True
+        assert supports_tool_result_image("gemini/gemini-2.5-pro") is True
 
 
 # ============ image_blocks helpers ============
@@ -567,107 +590,71 @@ class TestResponsesAPIRoundTrip:
         assert any(i["image_url"] == "https://e.com/x.png" for i in image_items)
 
 
-# ============ Notebook execution summary ============
+# ============ Agent-layer content_blocks auto-merge ============
 
 
-class TestNotebookSummary:
+class TestAgentContentBlocksMerge:
+    """Verify the agent framework's opt-in logic for content_blocks.
 
-    def test_empty_exec_result(self):
-        assert _summarise_exec_result_for_blocks({}) == ""
-
-    def test_stream_outputs_concatenated(self):
-        out = _summarise_exec_result_for_blocks({
-            "outputs": [
-                {"output_type": "stream", "text": "hello\n"},
-                {"output_type": "stream", "text": ["line1\n", "line2\n"]},
-            ],
-            "execution_count": 3,
-        })
-        assert out.startswith("[cell execution_count=3]")
-        assert "hello" in out
-        assert "line1" in out
-
-    def test_error_output_rendered(self):
-        out = _summarise_exec_result_for_blocks({
-            "outputs": [
-                {"output_type": "error", "ename": "ValueError", "evalue": "oops"},
-            ],
-        })
-        assert "ValueError: oops" in out
-
-    def test_text_plain_truncated(self):
-        long = "x" * 1000
-        out = _summarise_exec_result_for_blocks({
-            "outputs": [
-                {
-                    "output_type": "execute_result",
-                    "data": {"text/plain": long},
-                },
-            ],
-        })
-        # Should keep text but the limit is 500
-        assert len(out) < 900  # well under the raw 1000
-
-    def test_image_only_output_produces_header_or_empty(self):
-        # No stream/error/text, just an image → summary is just header (may be empty)
-        out = _summarise_exec_result_for_blocks({
-            "outputs": [
-                {
-                    "output_type": "display_data",
-                    "data": {"image/png": "someb64"},
-                },
-            ],
-            "execution_count": 5,
-        })
-        # Header-only allowed; body empty
-        assert "execution_count=5" in out or out == ""
-
-
-# ============ Agent-layer opt-in (integration-lite) ============
-
-
-class TestAgentOptInPath:
-    """Verify the agent.py tool-message construction respects content-blocks opt-in.
-
-    We don't spin up a full Agent; we inline the critical logic to ensure
-    a dict result with list-of-blocks `content` is preserved verbatim.
+    We inline the critical detection logic so the test doesn't need a full
+    Agent instance.
     """
 
-    def test_list_of_blocks_preserved(self):
-        # Mimic the check added in agent.py _run_single_tool_call
+    def _detect_native(self, result) -> list | None:
+        """Mimic agent.py::_run_single_tool_call native-blocks detection."""
+        if not isinstance(result, dict):
+            return None
+        maybe_blocks = result.get("content_blocks")
+        if isinstance(maybe_blocks, list) and any(
+            isinstance(b, dict) and b.get("type") == "image_url"
+            for b in maybe_blocks
+        ):
+            return maybe_blocks
+        return None
+
+    def test_content_blocks_with_image_detected(self):
         result = {
             "success": True,
-            "content": [
-                {"type": "text", "text": "ok"},
+            "cell_id": "abc",
+            "content_blocks": [
                 {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
             ],
         }
-        maybe_blocks = result.get("content") if isinstance(result, dict) else None
-        is_image_content = (
-            isinstance(maybe_blocks, list)
-            and any(
-                isinstance(b, dict) and b.get("type") == "image_url"
-                for b in maybe_blocks
-            )
-        )
-        assert is_image_content is True
+        assert self._detect_native(result) is not None
 
-    def test_string_content_not_treated_as_blocks(self):
+    def test_no_content_blocks_falls_through(self):
         result = {"success": True, "content": "plain text"}
-        maybe_blocks = result.get("content")
-        assert not isinstance(maybe_blocks, list)
+        assert self._detect_native(result) is None
 
-    def test_text_only_blocks_not_treated_as_image_blocks(self):
+    def test_content_blocks_without_image_ignored(self):
         result = {
             "success": True,
-            "content": [{"type": "text", "text": "no images here"}],
+            "content_blocks": [{"type": "text", "text": "no images here"}],
         }
-        maybe_blocks = result.get("content")
-        has_image = any(
-            isinstance(b, dict) and b.get("type") == "image_url"
-            for b in maybe_blocks
-        )
-        assert has_image is False
+        assert self._detect_native(result) is None
+
+    def test_string_content_not_mistaken_for_blocks(self):
+        # Old-style tool results with content: str must NOT trigger native path.
+        result = {"success": True, "content": "plain text"}
+        assert self._detect_native(result) is None
+
+    def test_structured_data_preserved_when_peeled(self):
+        """After extracting content_blocks, remaining dict keeps other fields."""
+        result = {
+            "success": True,
+            "cell_id": "abc",
+            "notebook_path": "foo.ipynb",
+            "execution_count": 3,
+            "content_blocks": [
+                {"type": "image_url", "image_url": {"url": _TINY_PNG_DATA_URI}},
+            ],
+        }
+        structured = {k: v for k, v in result.items() if k != "content_blocks"}
+        assert structured["cell_id"] == "abc"
+        assert structured["notebook_path"] == "foo.ipynb"
+        assert structured["execution_count"] == 3
+        assert "content_blocks" not in structured
+        assert structured["success"] is True
 
 
 # ============ observe_images routing (mocked) ============
@@ -704,13 +691,18 @@ class TestObserveImagesRouting:
             )
 
         assert result["success"] is True
-        assert isinstance(result["content"], list)
+        # Native mode uses the content_blocks opt-in field, leaving other
+        # structured metadata (question, image_count) at the top level.
+        assert "content_blocks" in result
+        assert isinstance(result["content_blocks"], list)
+        assert result.get("question") == "what is this?"
+        assert result.get("image_count") == 1
+        assert result.get("mode") == "native"
         # Sub-agent should NOT have been invoked
         mock_ctx.call_agent.assert_not_called()
-        # Expect text block + image block
-        types = [b.get("type") for b in result["content"]]
-        assert "text" in types
-        assert "image_url" in types
+        # Every block is an image_url (no text block — framework adds one)
+        types = [b.get("type") for b in result["content_blocks"]]
+        assert all(t == "image_url" for t in types)
 
     @pytest.mark.asyncio
     async def test_subagent_mode_calls_call_agent(self, sample_image, monkeypatch):
