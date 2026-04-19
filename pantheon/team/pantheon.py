@@ -11,6 +11,7 @@ from pantheon.agent import (
     get_current_run_context,
 )
 from pantheon.internal.memory import Memory
+from pantheon.settings import get_settings
 from pantheon.utils.log import logger
 from pantheon.utils.misc import run_func
 from .base import Team
@@ -202,6 +203,46 @@ async def _get_cache_safe_child_fork_context_messages(
         if message.get("role") != "system"
     ]
     return fork_context_messages or None
+
+
+async def _resolve_child_delegation_delivery(
+    run_context,
+    target_agent: Agent | RemoteAgent,
+    child_context_variables: dict,
+    use_summary: bool,
+) -> tuple[dict, bool]:
+    """Choose how a delegated child receives parent context.
+
+    Returns the possibly-updated child context variables and whether
+    create_delegation_task_message() should use summary fallback.
+    """
+    delegation_settings = get_settings().get_section("delegation")
+    if not bool(delegation_settings.get("fork_context", False)):
+        return child_context_variables, False
+
+    fork_context_messages = await _get_cache_safe_child_fork_context_messages(
+        run_context,
+        target_agent,
+    )
+    if fork_context_messages:
+        updated_context_variables = dict(child_context_variables)
+        # Cache-compatible path: share parent prefix byte-for-byte.
+        updated_context_variables["_cache_safe_fork_context_messages"] = (
+            fork_context_messages
+        )
+        return updated_context_variables, False
+
+    if getattr(run_context, "memory", None):
+        structured_fork = _build_structured_fork_context(run_context)
+        if structured_fork:
+            updated_context_variables = dict(child_context_variables)
+            # Non-cache-sharing path: pass optimised structured history.
+            updated_context_variables["_cache_safe_fork_context_messages"] = (
+                structured_fork
+            )
+            return updated_context_variables, False
+
+    return child_context_variables, use_summary
 
 
 
@@ -576,35 +617,14 @@ class PantheonTeam(Team):
                         child_context_variables,
                     )
                 )
-                # CC-style delegation: structured fork is PRIMARY path.
-                # Child receives parent's full optimized message history as
-                # structured messages (forkContextMessages), enabling prompt
-                # cache sharing.  Summary is only a FALLBACK when no
-                # structured context is available.
-                use_summary_fallback = False
-                fork_context_messages = await _get_cache_safe_child_fork_context_messages(
-                    run_context,
-                    target_agent,
-                )
-                if fork_context_messages:
-                    # Path 1: Cache-compatible — share parent prefix byte-for-byte
-                    child_context_variables["_cache_safe_fork_context_messages"] = (
-                        fork_context_messages
+                child_context_variables, use_summary_fallback = (
+                    await _resolve_child_delegation_delivery(
+                        run_context=run_context,
+                        target_agent=target_agent,
+                        child_context_variables=child_context_variables,
+                        use_summary=self.use_summary,
                     )
-                elif run_context.memory:
-                    # Path 2: Incompatible agents — pass optimized structured
-                    # messages (CC's forkContextMessages for non-cache-sharing)
-                    structured_fork = _build_structured_fork_context(run_context)
-                    if structured_fork:
-                        child_context_variables["_cache_safe_fork_context_messages"] = (
-                            structured_fork
-                        )
-                    else:
-                        # Path 3: No structured context available — fall back to
-                        # summary (only when use_summary=True)
-                        use_summary_fallback = self.use_summary
-                else:
-                    use_summary_fallback = self.use_summary
+                )
 
                 # Build task message — with or without summary
                 task_message = await create_delegation_task_message(

@@ -197,6 +197,13 @@
         // Enable the task system (injects TaskToolSet into primary agent)
         "enabled": true
     },
+    // ===== Delegation Configuration =====
+    "delegation": {
+        // If true, call_agent may fork the parent's optimized history into
+        // the child agent. Disabled by default so delegated children only
+        // receive the explicit instruction from the parent.
+        "fork_context": false
+    },
     // ===== Long-Term Memory System Configuration =====
     // Cross-session persistent memory with LLM-based selection and dream consolidation
     "memory_system": {
