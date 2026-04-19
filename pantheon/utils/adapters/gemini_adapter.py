@@ -25,6 +25,7 @@ from .base import (
     RateLimitError,
     APIConnectionError,
 )
+from .image_blocks import has_image_content, split_text_and_images
 
 
 def _wrap_gemini_error(e: Exception) -> Exception:
@@ -167,9 +168,33 @@ def _convert_messages_to_gemini(messages: list[dict]) -> tuple[str | None, list[
             continue
 
         if role == "tool":
-            # Tool results → function_response parts
+            # Tool results → function_response parts.
+            # When the tool returns images (OpenAI-style image_url blocks),
+            # emit a functionResponse carrying the text summary PLUS additional
+            # inline_data parts in the same user message so Gemini can see
+            # both the structured result and the pixels.
             tool_call_id = msg.get("tool_call_id", "")
             tool_name = msg.get("name", tool_call_id)
+
+            if has_image_content(content):
+                text, inline_images, http_urls = split_text_and_images(content)
+                parts: list[dict[str, Any]] = [
+                    {
+                        "functionResponse": {
+                            "name": tool_name,
+                            "response": {"result": text or "(see attached image)"},
+                        }
+                    }
+                ]
+                for mime, data in inline_images:
+                    parts.append({"inline_data": {"mime_type": mime, "data": data}})
+                for url in http_urls:
+                    # Gemini has no direct URL image type in functionResponse;
+                    # fall back to a text note so the model knows about the URL.
+                    parts.append({"text": f"[Referenced image URL: {url}]"})
+                contents.append({"role": "user", "parts": parts})
+                continue
+
             try:
                 result = json.loads(content) if isinstance(content, str) else content
             except (json.JSONDecodeError, TypeError):

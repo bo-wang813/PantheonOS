@@ -5,7 +5,7 @@ icon: 🏠
 id: default
 name: General Team
 type: team
-version: 1.3.0
+version: 1.4.0
 agents:
   - leader
   - researcher
@@ -26,6 +26,8 @@ leader:
 ---
 
 {{agentic_general}}
+
+{{visual_verification}}
 
 ## Task Execution Strategy
 
