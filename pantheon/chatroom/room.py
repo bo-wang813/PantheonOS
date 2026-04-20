@@ -317,8 +317,14 @@ class ChatRoom(ToolSet):
                 task.cancel()
 
 
-    def _save_team_template_to_memory(self, memory, template_obj: dict) -> None:
-        """Save TeamConfig to memory for persistence (new format)."""
+    def _save_team_template_to_memory(
+        self,
+        memory,
+        template_obj: dict,
+        *,
+        persist: bool = False,
+    ) -> dict:
+        """Save TeamConfig to memory and optionally persist it immediately."""
         extra_data = getattr(memory, "extra_data", None)
         if extra_data is None:
             memory.extra_data = extra_data = {}
@@ -328,7 +334,30 @@ class ChatRoom(ToolSet):
         else:
             team_config = self.template_manager.dict_to_team_config(template_obj)
 
-        memory.set_metadata_in_memory("team_template", dataclasses.asdict(team_config))
+        template_dict = dataclasses.asdict(team_config)
+        if persist:
+            memory.set_metadata("team_template", template_dict)
+        else:
+            memory.set_metadata_in_memory("team_template", template_dict)
+        return template_dict
+
+    def _build_template_summary(self, template_obj: dict | None) -> dict | None:
+        """Build a lightweight template summary for chat listings."""
+        if not isinstance(template_obj, dict):
+            return None
+
+        agents = template_obj.get("agents")
+        agent_count = len(agents) if isinstance(agents, list) else None
+
+        return {
+            "id": template_obj.get("id"),
+            "name": template_obj.get("name"),
+            "icon": template_obj.get("icon"),
+            "category": template_obj.get("category"),
+            "version": template_obj.get("version"),
+            "source_path": template_obj.get("source_path"),
+            "agent_count": agent_count,
+        }
 
     async def get_team_for_chat(self, chat_id: str, save_to_memory: bool = True) -> PantheonTeam:
         """Get the team for a specific chat, creating from memory if needed."""
@@ -502,15 +531,10 @@ class ChatRoom(ToolSet):
             # Store full template in memory using consolidated method
             # Read-only: storing template, no need to fix
             memory = await run_func(self.memory_manager.get_memory, chat_id)
-            self._save_team_template_to_memory(memory, template_obj)
+            self._save_team_template_to_memory(memory, template_obj, persist=save_to_memory)
 
             memory.delete_metadata("active_agent")
             
-            if save_to_memory:
-                # Optionally: use save_one for immediate persistence of just this chat
-                # await run_func(self.memory_manager.save_one, chat_id)
-                pass
-
             # Clear cached team (force recreation next time)
             if chat_id in self.chat_teams:
                 del self.chat_teams[chat_id]
@@ -900,6 +924,10 @@ class ChatRoom(ToolSet):
         project_name: str | None = None,
         workspace_path: str | None = None,
         workspace_mode: str = "project",
+        template_id: str | None = None,
+        template_obj: dict | None = None,
+        chat_config: dict | None = None,
+        project_metadata: dict | None = None,
     ) -> dict:
         """Create a new chat.
 
@@ -908,9 +936,66 @@ class ChatRoom(ToolSet):
             project_name: Optional project name for grouping.
             workspace_path: Optional workspace directory path.
             workspace_mode: Workspace mode - "project" (shared, default) or "isolated" (per-chat).
+            template_id: Optional existing team template ID to bind at creation time.
+            template_obj: Optional full team template object to bind at creation time.
+            chat_config: Optional per-chat UI/runtime configuration blob.
+            project_metadata: Optional extra project metadata to persist with the chat.
         """
+        if template_id and template_obj:
+            return {
+                "success": False,
+                "message": "template_id and template_obj are mutually exclusive",
+            }
+
+        if project_metadata is not None and not isinstance(project_metadata, dict):
+            return {
+                "success": False,
+                "message": "project_metadata must be a dict when provided",
+            }
+
+        if chat_config is not None and not isinstance(chat_config, dict):
+            return {
+                "success": False,
+                "message": "chat_config must be a dict when provided",
+            }
+
+        initial_template_dict = None
+        if template_id:
+            initial_template = self.template_manager.get_template(template_id)
+            if not initial_template:
+                return {
+                    "success": False,
+                    "message": f"Team template '{template_id}' not found",
+                }
+            initial_template_dict = dataclasses.asdict(initial_template)
+        elif template_obj is not None:
+            validation = self.template_manager.validate_template_dict(template_obj)
+            if not validation.get("success"):
+                return {
+                    "success": False,
+                    "message": validation.get("message", "Template validation failed"),
+                    "validation_errors": validation.get("validation_errors", []),
+                }
+            initial_template_dict = copy.deepcopy(
+                validation.get("template") or template_obj
+            )
+
         memory = await run_func(self.memory_manager.new_memory, chat_name)
         memory.set_metadata("last_activity_date", datetime.now().isoformat())
+
+        project = copy.deepcopy(project_metadata) if project_metadata else {}
+        if project_name is not None:
+            project["name"] = project_name
+
+        if workspace_path is None and isinstance(project, dict):
+            project_workspace_path = project.get("workspace_path")
+            if isinstance(project_workspace_path, str) and project_workspace_path:
+                workspace_path = project_workspace_path
+
+        if workspace_mode == "project" and isinstance(project, dict):
+            project_workspace_mode = project.get("workspace_mode")
+            if isinstance(project_workspace_mode, str) and project_workspace_mode:
+                workspace_mode = project_workspace_mode
 
         if workspace_path:
             # Explicit path provided — always isolated
@@ -934,15 +1019,20 @@ class ChatRoom(ToolSet):
                 workspace_mode = "project"  # Fallback to project mode
 
         # Set project metadata
-        project = {}
-        if project_name:
-            project["name"] = project_name
         project["workspace_mode"] = workspace_mode
         if workspace_path:
             project["workspace_path"] = workspace_path
-            project["original_cwd"] = str(get_settings().workspace)
+            project.setdefault("original_cwd", str(get_settings().workspace))
         if project:
             memory.set_metadata("project", project)
+        if chat_config is not None:
+            memory.set_metadata("chat_config", copy.deepcopy(chat_config))
+        if initial_template_dict is not None:
+            initial_template_dict = self._save_team_template_to_memory(
+                memory,
+                initial_template_dict,
+                persist=True,
+            )
 
         return {
             "success": True,
@@ -951,6 +1041,9 @@ class ChatRoom(ToolSet):
             "chat_id": memory.id,
             "workspace_mode": workspace_mode,
             "workspace_path": workspace_path,
+            "project": copy.deepcopy(project),
+            "chat_config": copy.deepcopy(chat_config) if chat_config is not None else None,
+            "template": self._build_template_summary(initial_template_dict),
         }
 
     @tool
@@ -1033,6 +1126,18 @@ class ChatRoom(ToolSet):
                     if chat_project_name != project_name:
                         continue
 
+                workspace_mode = None
+                workspace_path = None
+                if isinstance(project, dict):
+                    workspace_mode = project.get(
+                        "workspace_mode",
+                        "isolated" if project.get("workspace_path") else "project",
+                    )
+                    workspace_path = project.get("workspace_path")
+
+                chat_config = memory.extra_data.get("chat_config", None)
+                team_template = memory.extra_data.get("team_template", None)
+
                 chats.append(
                     {
                         "id": id,
@@ -1042,6 +1147,12 @@ class ChatRoom(ToolSet):
                             "last_activity_date", None
                         ),
                         "project": project,
+                        "workspace_mode": workspace_mode,
+                        "workspace_path": workspace_path,
+                        "chat_config": copy.deepcopy(chat_config)
+                        if isinstance(chat_config, dict)
+                        else chat_config,
+                        "template": self._build_template_summary(team_template),
                         "memory_path": memory.file_path,
                     }
                 )
