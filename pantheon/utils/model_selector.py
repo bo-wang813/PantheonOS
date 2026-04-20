@@ -31,6 +31,8 @@ if TYPE_CHECKING:
 # Deprecated custom endpoint registry kept empty so older imports remain safe.
 CUSTOM_ENDPOINT_ENVS: dict[str, object] = {}
 
+SAVED_MODEL_PROVIDERS = ("openai", "anthropic", "gemini")
+
 # Sentinel object for negative cache (better than empty string)
 _NOT_FOUND = object()
 
@@ -88,6 +90,43 @@ def reset_ollama_cache() -> None:
     _ollama_available = False
     _ollama_models = []
     _ollama_last_checked = 0.0
+
+
+def normalize_saved_models(raw: object) -> dict[str, list[str]]:
+    """Normalize ``models.saved_models`` into provider -> bare model names."""
+    normalized: dict[str, list[str]] = {provider: [] for provider in SAVED_MODEL_PROVIDERS}
+    if not isinstance(raw, dict):
+        return normalized
+
+    for provider in SAVED_MODEL_PROVIDERS:
+        seen: set[str] = set()
+        values = raw.get(provider, [])
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, str):
+                continue
+            model_name = item.strip()
+            if not model_name:
+                continue
+            prefix = f"{provider}/"
+            if model_name.startswith(prefix):
+                model_name = model_name[len(prefix):]
+            if model_name and model_name not in seen:
+                normalized[provider].append(model_name)
+                seen.add(model_name)
+
+    return normalized
+
+
+def get_saved_models(settings: "Settings") -> dict[str, list[str]]:
+    """Read normalized saved model names from settings."""
+    return normalize_saved_models(settings.get("models.saved_models", {}))
+
+
+def prefix_saved_models(provider: str, model_names: list[str]) -> list[str]:
+    """Return provider-prefixed model ids for saved model names."""
+    return [f"{provider}/{name}" for name in model_names if name]
 
 # ============ Default Configuration ============
 # Built-in defaults based on February 2026 flagship models
@@ -726,6 +765,7 @@ class ModelSelector:
 
         # Collect models for each available provider
         models_by_provider: dict[str, list[str]] = {}
+        saved_models = get_saved_models(self.settings)
         for provider in available_providers:
             provider_config = self._get_provider_models(provider)
             # Merge all quality levels and deduplicate while preserving order
@@ -739,6 +779,10 @@ class ModelSelector:
                     if model not in seen:
                         all_models.append(model)
                         seen.add(model)
+            for model in prefix_saved_models(provider, saved_models.get(provider, [])):
+                if model not in seen:
+                    all_models.append(model)
+                    seen.add(model)
             models_by_provider[provider] = all_models
 
         # Collect supported tags
@@ -749,7 +793,10 @@ class ModelSelector:
         reasoning_models: list[str] = []
         for provider_models in models_by_provider.values():
             for model in provider_models:
-                info = get_model_info(model)
+                try:
+                    info = get_model_info(model)
+                except Exception:
+                    info = {}
                 if info.get("supports_reasoning"):
                     reasoning_models.append(model)
 
@@ -818,4 +865,8 @@ __all__ = [
     "ULTIMATE_FALLBACK",
     "FALLBACK_TAG",
     "CUSTOM_ENDPOINT_ENVS",
+    "SAVED_MODEL_PROVIDERS",
+    "normalize_saved_models",
+    "get_saved_models",
+    "prefix_saved_models",
 ]

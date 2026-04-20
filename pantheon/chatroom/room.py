@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 DEFAULT_TOOLSETS = []
 
+
 class ChatRoom(ToolSet):
     """
     ChatRoom is a service that allows user to interact with a team of agents.
@@ -1990,6 +1991,44 @@ class ChatRoom(ToolSet):
         return template_manager.delete_template_file(file_path)
 
     # Model Management Methods
+
+    @tool
+    async def saved_models(self, saved_models: dict[str, list[str]] | None = None) -> dict:
+        """Get or persist provider models used by the UI model selector."""
+        from pantheon.utils.model_selector import get_saved_models, normalize_saved_models
+
+        settings = get_settings()
+        if saved_models is None:
+            return {
+                "success": True,
+                "saved_models": get_saved_models(settings),
+            }
+
+        normalized = normalize_saved_models(saved_models)
+        settings.persist_project_value("models.saved_models", normalized)
+        settings.reload()
+
+        return {
+            "success": True,
+            "saved_models": normalized,
+            "message": "Saved models updated.",
+        }
+
+    @tool
+    async def discover_provider_models(
+        self,
+        provider: str,
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> dict:
+        """Discover provider models asynchronously without persisting them."""
+        from pantheon.utils.model_discovery import discover_provider_models_with_fallback
+
+        return await discover_provider_models_with_fallback(
+            provider=provider,
+            api_key=api_key,
+            api_base=api_base,
+        )
 
     @tool
     async def list_available_models(self) -> dict:

@@ -143,6 +143,18 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
     return result
 
 
+def _set_nested_value(target: Dict[str, Any], parts: list[str], value: Any) -> None:
+    """Set a nested dict value, creating intermediate dicts as needed."""
+    current = target
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+
+
 class Settings:
     """
     Unified settings manager for Pantheon.
@@ -427,6 +439,26 @@ class Settings:
         self._merge_settings(self._mcp, mcp_project)
         if mcp_project:
             logger.debug(f"Loaded project MCP config from {self.pantheon_dir}")
+
+    def persist_project_value(self, key: str, value: Any) -> Path:
+        """Persist a dotted-key setting into the project-level settings.json.
+
+        This writes to ``.pantheon/settings.json`` only, preserving the existing
+        layered configuration model where project settings override user/global
+        defaults. The file is written as plain JSON after loading any existing
+        JSONC content.
+        """
+        project_path = self.pantheon_dir / self.SETTINGS_FILE
+        project_settings = load_jsonc(project_path)
+        _set_nested_value(project_settings, key.split("."), value)
+
+        self.pantheon_dir.mkdir(parents=True, exist_ok=True)
+        project_path.write_text(
+            json.dumps(project_settings, indent=4, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        logger.info(f"Persisted project setting '{key}' to {project_path}")
+        return project_path
 
     def __getitem__(self, key: str) -> Any:
         """

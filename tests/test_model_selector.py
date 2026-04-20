@@ -20,6 +20,7 @@ from pantheon.utils.model_selector import (
     get_model_selector,
     refresh_ollama_cache,
     reset_model_selector,
+    normalize_saved_models,
 )
 
 
@@ -248,6 +249,21 @@ class TestUserConfiguration:
         models = selector._get_provider_models("openai")
         assert models["high"] == ["openai/custom-model-1"]
 
+    def test_normalize_saved_models_strips_prefixes_and_dedupes(self):
+        normalized = normalize_saved_models(
+            {
+                "openai": ["openai/gpt-4.1", "gpt-4.1", "gpt-4.1-mini", ""],
+                "anthropic": ["anthropic/claude-sonnet-4-20250514"],
+                "gemini": ["gemini-2.5-pro", None],
+            }
+        )
+
+        assert normalized == {
+            "openai": ["gpt-4.1", "gpt-4.1-mini"],
+            "anthropic": ["claude-sonnet-4-20250514"],
+            "gemini": ["gemini-2.5-pro"],
+        }
+
 
 class TestGetDefaultModel:
     """Test the convenience function get_default_model."""
@@ -387,6 +403,31 @@ class TestModelListingDisplayKeys:
 
         assert "ollama" not in first["available_providers"]
         assert "ollama" in second["available_providers"]
+
+    def test_list_available_models_merges_saved_models(self, mock_settings):
+        selector = ModelSelector(mock_settings)
+        mock_settings.get.side_effect = lambda key, default=None: (
+            {"openai": ["gpt-extra", "openai/gpt-curated"]} if key == "models.saved_models" else default
+        )
+
+        with (
+            patch.object(
+                selector,
+                "_get_available_providers",
+                return_value={"openai"},
+            ),
+            patch.object(
+                selector,
+                "detect_available_provider",
+                return_value="openai",
+            ),
+            patch("pantheon.utils.provider_registry.get_model_info", return_value={}),
+        ):
+            result = selector.list_available_models()
+
+        openai_models = result["models_by_provider"]["openai"]
+        assert "openai/gpt-extra" in openai_models
+        assert openai_models.count("openai/gpt-curated") == 1
 
 class TestOllamaRefresh:
     @pytest.mark.asyncio

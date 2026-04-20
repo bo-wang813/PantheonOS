@@ -129,6 +129,13 @@
     "models": {
         // Provider priority order (first available provider with API key is used)
         // "provider_priority": ["openai", "anthropic", "gemini", "zai", "deepseek"],
+        // Saved model names for UI selectors. These do not affect high/normal/low routing.
+        // Values should be bare model names because the provider is implied by the key.
+        // "saved_models": {
+        //     "openai": ["gpt-4.1", "kimi-k2"],
+        //     "anthropic": ["claude-sonnet-4-20250514"],
+        //     "gemini": ["gemini-2.5-pro"]
+        // },
         // Per-provider model configuration (optional - code has sensible defaults)
         // Quality levels map to model lists (fallback chains)
         // "provider_models": {
