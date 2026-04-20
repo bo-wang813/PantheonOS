@@ -8,7 +8,7 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 from uuid import uuid4
 
@@ -206,6 +206,11 @@ class AgentRunContext:
     cache_safe_tool_definitions: list[dict] | None = None
     context_collapse_manager: Any | None = None
     current_model: str | None = None
+    # Maps a call_agent tool_call_id → the child's execution_context_id so the
+    # eventual tool_message can be stamped with it. Lets the UI link a
+    # call_agent response back to the exact sub-agent invocation, even when
+    # the parent launches multiple parallel calls to the same agent name.
+    sub_agent_exec_ids: dict[str, str] = field(default_factory=dict)
 
 
 _RUN_CONTEXT: ContextVar[AgentRunContext | None] = ContextVar(
@@ -1445,6 +1450,16 @@ class Agent:
                     "execution_duration": execution_duration,
                 },
             }
+
+            # Stamp the child's execution_context_id if this was a call_agent
+            # invocation. The PantheonTeam.call_agent closure records the
+            # (tool_call_id → child_exec_id) mapping on run_context when it
+            # spawns the sub-agent.
+            _run_ctx = _RUN_CONTEXT.get()
+            if _run_ctx is not None and tool_call_id:
+                _child_exec_id = _run_ctx.sub_agent_exec_ids.pop(tool_call_id, None)
+                if _child_exec_id:
+                    tool_message["execution_context_id"] = _child_exec_id
 
             if isinstance(result, (Agent, RemoteAgent)):
                 tool_message.update(
