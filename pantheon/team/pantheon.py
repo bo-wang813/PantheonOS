@@ -606,6 +606,15 @@ class PantheonTeam(Team):
                     self.max_delegate_depth,
                 )
 
+                # Record tool_call_id → child execution_context_id on the parent's
+                # run_context so the tool_message built back in Agent._call_tools
+                # can be stamped with this sub-agent's execution_context_id.
+                # Without this, the UI cannot tell apart two parallel call_agent()
+                # invocations to the same agent name.
+                parent_tool_call_id = context_variables.get("tool_call_id") if context_variables else None
+                if parent_tool_call_id and run_context is not None:
+                    run_context.sub_agent_exec_ids[parent_tool_call_id] = execution_context_id
+
                 child_context_variables = dict(context_variables)
                 child_context_variables["_metadata"] = child_metadata
                 # P2: Set execution_context_id at top level for child agent
@@ -640,16 +649,26 @@ class PantheonTeam(Team):
                 parent_step_hook = run_context.process_step_message
                 parent_chunk_hook = run_context.process_chunk
 
+                # Stamp the parent's call_agent tool_call_id onto every child
+                # message so the UI can pair (tool_call_id → execution_context_id)
+                # as soon as the first streaming chunk arrives — not only after
+                # the tool response lands. Without this, two parallel call_agent
+                # invocations to the same agent name can't be told apart while
+                # the sub-agents are still running.
+                _parent_tool_call_id = parent_tool_call_id
+
                 async def wrapped_step(step_message: dict):
                     # P2: Set execution_context_id at message top level
                     if "execution_context_id" not in step_message:
                         step_message["execution_context_id"] = execution_context_id
-                    
+                    if _parent_tool_call_id and "parent_tool_call_id" not in step_message:
+                        step_message["parent_tool_call_id"] = _parent_tool_call_id
+
                     # P0 FIX + P2: Merge metadata using setdefault chaining
                     step_message.setdefault("_metadata", child_metadata).setdefault(
                         "chain_path", child_metadata["chain_path"]
                     )
-                    
+
                     if parent_step_hook is not None:
                         await run_func(parent_step_hook, step_message)
 
@@ -657,12 +676,14 @@ class PantheonTeam(Team):
                     # P2: Set execution_context_id at message top level
                     if "execution_context_id" not in chunk:
                         chunk["execution_context_id"] = execution_context_id
-                    
+                    if _parent_tool_call_id and "parent_tool_call_id" not in chunk:
+                        chunk["parent_tool_call_id"] = _parent_tool_call_id
+
                     # P0 FIX + P2: Merge metadata using setdefault chaining
                     chunk.setdefault("_metadata", child_metadata).setdefault(
                         "chain_path", child_metadata["chain_path"]
                     )
-                    
+
                     if parent_chunk_hook is not None:
                         await run_func(parent_chunk_hook, chunk)
 
