@@ -15,7 +15,7 @@ Native support map (as of 2026-04):
 
 from __future__ import annotations
 
-from .llm_providers import ProviderType, detect_provider, is_responses_api_model
+from .llm_providers import ProviderType, detect_provider, should_use_responses_api
 
 
 def supports_tool_result_image(model: str | None) -> bool:
@@ -34,17 +34,6 @@ def supports_tool_result_image(model: str | None) -> bool:
     if not model:
         return False
 
-    # Proxy mode (LLM_API_BASE set) forces OpenAI Chat Completions format
-    # regardless of the model name — even "anthropic/..." routes through
-    # the /v1/chat/completions endpoint on the proxy. The adapter sanitiser
-    # then strips image content from tool messages. Returning True here
-    # would trick observe_images into returning image blocks that get
-    # silently stripped downstream, which is worse than the sub-agent
-    # fallback (which produces a text summary).
-    from .llm_providers import get_global_fallback_base_url
-    if get_global_fallback_base_url():
-        return False
-
     bare = model.lower()
     # Strip provider prefix for matching (e.g. "anthropic/claude" → "claude")
     if "/" in bare:
@@ -58,9 +47,7 @@ def supports_tool_result_image(model: str | None) -> bool:
     if prefix in {"gemini", "google"}:
         return True
     # Codex OAuth (codex/gpt-5.x) routes through the backend-api Responses
-    # endpoint which supports input_image in function_call_output. The codex
-    # adapter shares _convert_messages_to_responses_input with the main
-    # Responses API path, so the same image-in-tool-output encoding works.
+    # endpoint which supports input_image in function_call_output.
     if prefix == "codex":
         return True
     # Bare model names without provider prefix.
@@ -68,19 +55,20 @@ def supports_tool_result_image(model: str | None) -> bool:
         if tail.startswith("claude") or tail.startswith("gemini"):
             return True
 
-    # OpenAI Responses API supports input_image in function_call_output.
-    # Use the existing helper to detect Responses-only models (codex, *-pro, etc.).
+    # OpenAI: by default we route via Responses API, which supports
+    # input_image in function_call_output. If a previous call on this
+    # (base_url, model) pair proved /v1/responses is unavailable, the cache
+    # in should_use_responses_api flips to False and we report no native
+    # tool-image support — matching the Chat Completions fallback behaviour.
     try:
         config = detect_provider(model, relaxed_schema=False)
+        if config.provider_type == ProviderType.OPENAI:
+            return should_use_responses_api(config)
         if config.provider_type == ProviderType.NATIVE:
-            # Any NATIVE-routed model with recognised prefix handled above;
-            # otherwise default conservative.
             bare_model = config.model_name.lower()
             if bare_model.startswith(("anthropic/", "claude", "gemini", "google/", "codex/")):
                 return True
             return False
-        if is_responses_api_model(config):
-            return True
     except Exception:
         # Fall through to False on any detection failure.
         pass

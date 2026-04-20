@@ -116,11 +116,14 @@ def detect_provider(model: str, relaxed_schema: bool) -> ProviderConfig:
 
 
 def is_responses_api_model(config: ProviderConfig) -> bool:
-    """Check if model should use the OpenAI Responses API instead of Chat Completions.
+    """Check if the model is Responses-API-only (no Chat Completions fallback).
 
     Triggers for:
     - Models with "codex" in the name (e.g. codex-mini-latest)
     - Pro models (gpt-5.x-pro, gpt-5.2-pro) which are Responses-only
+
+    For the broader "should I try Responses API" question (which covers all
+    OpenAI models by default), use ``should_use_responses_api`` instead.
     """
     name_lower = config.model_name.lower()
     if config.provider_type != ProviderType.OPENAI:
@@ -128,6 +131,53 @@ def is_responses_api_model(config: ProviderConfig) -> bool:
     # Strip "openai/" prefix for matching
     bare = name_lower.split("/")[-1] if "/" in name_lower else name_lower
     return "codex" in bare or bare.endswith("-pro")
+
+
+# Per-process cache of (base_url, model_name) combinations where the
+# /v1/responses endpoint is known to be unavailable. Populated at runtime
+# when a Responses API call hits a 404 — we then fall back to Chat Completions
+# and skip the probe on subsequent calls.
+_RESPONSES_API_UNAVAILABLE: set[tuple[str, str]] = set()
+
+
+def _responses_cache_key(config: ProviderConfig) -> tuple[str, str]:
+    return (config.base_url or "", config.model_name.lower())
+
+
+def should_use_responses_api(config: ProviderConfig) -> bool:
+    """Return True if this OpenAI call should try the Responses API first.
+
+    Default behaviour: all OPENAI-routed models attempt /v1/responses, because
+    Responses API supports native image input in function_call_output and has
+    superseded Chat Completions for most modern OpenAI models.
+
+    Exceptions:
+    - Non-OPENAI provider types (anthropic, gemini, etc.) use their native SDKs.
+    - Codex OAuth models (``codex/``) have a dedicated adapter.
+    - (base_url, model) pairs where a prior call recorded that the endpoint
+      does not implement /v1/responses fall back to Chat Completions.
+    """
+    if config.provider_type != ProviderType.OPENAI:
+        return False
+    if "codex/" in config.model_name.lower():
+        return False
+    if _responses_cache_key(config) in _RESPONSES_API_UNAVAILABLE:
+        return False
+    return True
+
+
+def mark_responses_api_unavailable(config: ProviderConfig) -> None:
+    """Record that /v1/responses is not available for a (base_url, model) pair.
+
+    Called after a 404 from the Responses API so subsequent calls skip the probe
+    and go straight to Chat Completions.
+    """
+    _RESPONSES_API_UNAVAILABLE.add(_responses_cache_key(config))
+
+
+def reset_responses_api_cache() -> None:
+    """Clear the unavailability cache. Used in tests."""
+    _RESPONSES_API_UNAVAILABLE.clear()
 
 
 def get_provider_base_url(provider_key: str) -> Optional[str]:
@@ -473,8 +523,12 @@ async def call_llm_provider(
             model_params=model_params,
         )
 
-    # Route codex/pro models through the OpenAI Responses API
-    if is_responses_api_model(config):
+    # Default OpenAI routing: prefer /v1/responses for everything, fall back
+    # to /v1/chat/completions only if the endpoint doesn't implement it OR the
+    # model is rejected as unsupported. Responses-API-only models (codex,
+    # *-pro) never fall back — they raise on failure.
+    if should_use_responses_api(config):
+        import openai as _openai_mod
         from .llm import acompletion_responses
 
         model_name = config.model_name
@@ -484,16 +538,30 @@ async def call_llm_provider(
         logger.debug(
             f"[CALL_LLM_PROVIDER] Using Responses API for model={model_name}"
         )
-        # acompletion_responses returns a normalised message dict directly
-        return await acompletion_responses(
-            messages=clean_messages,
-            model=model_name,
-            tools=tools,
-            response_format=response_format,
-            process_chunk=process_chunk,
-            base_url=config.base_url,
-            model_params=model_params,
-        )
+        try:
+            return await acompletion_responses(
+                messages=clean_messages,
+                model=model_name,
+                tools=tools,
+                response_format=response_format,
+                process_chunk=process_chunk,
+                base_url=config.base_url,
+                model_params=model_params,
+            )
+        except _openai_mod.NotFoundError as e:
+            # Endpoint has no /v1/responses (custom proxy, older gateway) or
+            # the model isn't recognised on that endpoint. Mark unavailable
+            # so we don't probe again, and fall through to Chat Completions
+            # unless the model REQUIRES Responses API.
+            if is_responses_api_model(config):
+                raise
+            logger.info(
+                f"Responses API unavailable (base_url={config.base_url!r}, "
+                f"model={config.model_name!r}): {e}. "
+                f"Falling back to Chat Completions."
+            )
+            mark_responses_api_unavailable(config)
+            # Fall through to Chat Completions below
 
     if config.provider_type == ProviderType.OPENAI:
         # Provider adapters require explicit provider prefixes for models they cannot auto-detect.
