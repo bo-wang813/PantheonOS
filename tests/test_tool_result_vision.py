@@ -67,10 +67,17 @@ class TestCapabilityDetection:
         assert supports_tool_result_image("gemini/gemini-2.5-pro") is True
         assert supports_tool_result_image("google/gemini-2.0-flash") is True
 
-    def test_openai_chat_completions_not_supported(self):
-        assert supports_tool_result_image("gpt-4o") is False
-        assert supports_tool_result_image("openai/gpt-4o") is False
-        assert supports_tool_result_image("gpt-5") is False
+    def test_openai_defaults_to_responses_api_supported(self):
+        """OpenAI models now default to the Responses API, which supports
+        input_image in function_call_output, so tool-result images work
+        natively on the first call."""
+        from pantheon.utils.llm_providers import reset_responses_api_cache
+
+        reset_responses_api_cache()
+        assert supports_tool_result_image("gpt-4o") is True
+        assert supports_tool_result_image("openai/gpt-4o") is True
+        assert supports_tool_result_image("gpt-5") is True
+        assert supports_tool_result_image("openai/gpt-5.4") is True
 
     def test_openai_responses_api_supported(self):
         # codex and *-pro models go through Responses API which supports images
@@ -83,30 +90,34 @@ class TestCapabilityDetection:
         assert supports_tool_result_image("codex/gpt-5.4-mini") is True
         assert supports_tool_result_image("codex/gpt-5.2-codex") is True
 
-    def test_proxy_mode_forces_false(self, monkeypatch):
-        """When LLM_API_BASE is set (LiteLLM proxy), all calls route through
-        Chat Completions — even 'anthropic/...'. The sanitiser would strip
-        images, so native mode would degrade to a placeholder. Return False
-        to defer to the sub-agent fallback instead."""
-        # Patch at source module so the in-function
-        # `from .llm_providers import get_global_fallback_base_url`
-        # picks up the patched version.
-        monkeypatch.setattr(
-            "pantheon.utils.llm_providers.get_global_fallback_base_url",
-            lambda: "https://proxy.example.com",
+    def test_cached_unavailable_flips_openai_to_false(self):
+        """Once the Responses API probe has failed for a (base_url, model)
+        pair, supports_tool_result_image must flip to False so observe_images
+        falls back to the sub-agent path instead of sending image blocks that
+        would be stripped by the Chat Completions sanitiser."""
+        from pantheon.utils.llm_providers import (
+            ProviderConfig,
+            ProviderType,
+            mark_responses_api_unavailable,
+            reset_responses_api_cache,
         )
-        # Even Anthropic models should be False in proxy mode.
-        assert supports_tool_result_image("anthropic/claude-sonnet-4-6") is False
-        assert supports_tool_result_image("gemini/gemini-2.5-pro") is False
-        # OpenAI models are already False, still False.
-        assert supports_tool_result_image("gpt-5.4-mini") is False
 
-    def test_non_proxy_mode_preserves_native(self, monkeypatch):
-        """Without proxy, native support stands (regression guard)."""
-        monkeypatch.setattr(
-            "pantheon.utils.llm_providers.get_global_fallback_base_url",
-            lambda: "",
+        reset_responses_api_cache()
+        assert supports_tool_result_image("openai/gpt-5.4") is True
+        mark_responses_api_unavailable(
+            ProviderConfig(provider_type=ProviderType.OPENAI, model_name="gpt-5.4")
         )
+        assert supports_tool_result_image("openai/gpt-5.4") is False
+        # Other OpenAI models are independent.
+        assert supports_tool_result_image("openai/gpt-4o") is True
+        reset_responses_api_cache()
+
+    def test_anthropic_and_gemini_unaffected_by_openai_cache(self):
+        """Native providers (Anthropic/Gemini) report support regardless of
+        the OpenAI Responses cache state."""
+        from pantheon.utils.llm_providers import reset_responses_api_cache
+
+        reset_responses_api_cache()
         assert supports_tool_result_image("anthropic/claude-sonnet-4-6") is True
         assert supports_tool_result_image("gemini/gemini-2.5-pro") is True
 
@@ -754,6 +765,12 @@ class TestObserveImagesRouting:
     @pytest.mark.asyncio
     async def test_subagent_mode_calls_call_agent(self, sample_image, monkeypatch):
         from pantheon.toolsets.file.file_manager import FileManagerToolSet
+        from pantheon.utils.llm_providers import (
+            ProviderConfig,
+            ProviderType,
+            mark_responses_api_unavailable,
+            reset_responses_api_cache,
+        )
 
         fm = FileManagerToolSet(name="test_fm")
 
@@ -763,14 +780,24 @@ class TestObserveImagesRouting:
         )
         monkeypatch.setattr(fm, "get_context", lambda: mock_ctx)
 
-        # Force capability detection to return False (simulate Chat Completions).
-        with patch(
-            "pantheon.agent.get_current_run_model",
-            return_value="gpt-4o",
-        ):
-            result = await fm.observe_images.__wrapped__(
-                fm, question="what is this?", image_paths=[sample_image]
-            )
+        # Simulate the Responses API being unavailable for this model
+        # (e.g., proxy endpoint that doesn't implement /v1/responses), which
+        # flips supports_tool_result_image to False and forces the sub-agent
+        # path — the same fallback we use on a 404 in production.
+        reset_responses_api_cache()
+        mark_responses_api_unavailable(
+            ProviderConfig(provider_type=ProviderType.OPENAI, model_name="gpt-4o")
+        )
+        try:
+            with patch(
+                "pantheon.agent.get_current_run_model",
+                return_value="gpt-4o",
+            ):
+                result = await fm.observe_images.__wrapped__(
+                    fm, question="what is this?", image_paths=[sample_image]
+                )
+        finally:
+            reset_responses_api_cache()
 
         assert result["success"] is True
         # Sub-agent SHOULD have been invoked

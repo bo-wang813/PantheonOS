@@ -1365,9 +1365,17 @@ class ChatRoom(ToolSet):
             )
             if new_name and new_name != memory.name:
                 memory.name = new_name
+                # Sync customTitle to keep session_storage in step with memory.name,
+                # otherwise restoreSessionMetadata would clobber memory.name back
+                # on the next turn.
+                session_storage = memory.extra_data.get("session_storage")
+                if isinstance(session_storage, dict):
+                    metadata = session_storage.get("metadata")
+                    if isinstance(metadata, dict) and metadata.get("customTitle") != new_name:
+                        metadata["customTitle"] = new_name
+                        memory.mark_dirty()
                 # Save only this chat's memory
                 await run_func(self.memory_manager.save_one, memory.id)
-                logger.debug(f"Chat renamed in background to: {new_name}")
                 # Notify frontend via NATS
                 if self._nats_adapter is not None:
                     await self._nats_adapter.publish(
@@ -1375,7 +1383,7 @@ class ChatRoom(ToolSet):
                         {"type": "chat_renamed", "chat_id": memory.id, "name": new_name},
                     )
         except Exception as e:
-            logger.error(f"Background chat rename failed: {e}")
+            logger.error(f"Background chat rename failed: {e}", exc_info=True)
 
     def _setup_bg_auto_notify(self, chat_id: str, team):
         """Wire bg task completion to auto-trigger a new chat turn.
@@ -1636,16 +1644,17 @@ class ChatRoom(ToolSet):
             chat_id, process_chunk, process_step_message, wait=False
         )
 
-        # Generate chat name as soon as user message arrives (non-blocking).
-        # No need to wait for agent response — user message is enough context.
-        # Only fires if the chat still has a default name (e.g. "New Chat").
-        if self._enable_auto_chat_name:
-            task = asyncio.create_task(self._background_rename_chat(memory))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-
         try:
             await thread.run()
+
+            # Kick off rename AFTER thread.run() so memory has the user
+            # message (added inside agent.run()) and the agent response.
+            # Running it earlier raced the user-message insertion and caused
+            # the first message to never trigger a rename.
+            if self._enable_auto_chat_name:
+                task = asyncio.create_task(self._background_rename_chat(memory))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
 
             # Post-execution image detection: scan the designated image
             # output directory for any newly created images.
